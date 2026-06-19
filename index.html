@@ -1,0 +1,1559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Coconuts — Ocean City, MD · Walkaround</title>
+<style>
+  :root{
+    --sand:#e7d8b3;
+    --terra:#b3543f;
+    --teal:#1f9aa8;
+    --ink:#13212b;
+    --paper:#fbf6ea;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;overflow:hidden;background:#8fc6e6;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;}
+  #app{position:fixed;inset:0;}
+  canvas{display:block;}
+
+  /* Crosshair */
+  #cross{
+    position:fixed;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;
+    border-radius:50%;background:rgba(255,255,255,.85);box-shadow:0 0 0 1px rgba(0,0,0,.35);
+    pointer-events:none;opacity:0;transition:opacity .3s;z-index:5;
+  }
+  body.playing #cross{opacity:1;}
+
+  /* HUD */
+  #hud{
+    position:fixed;left:14px;bottom:14px;z-index:5;color:var(--paper);
+    font-size:12.5px;line-height:1.55;text-shadow:0 1px 3px rgba(0,0,0,.55);
+    pointer-events:none;opacity:0;transition:opacity .3s;letter-spacing:.2px;
+  }
+  body.playing #hud{opacity:.92;}
+  #hud b{color:#ffd76a;font-weight:700;}
+
+  /* Start / pause overlay */
+  #veil{
+    position:fixed;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(120% 120% at 50% 30%, rgba(31,154,168,.30), rgba(8,22,30,.86));
+    backdrop-filter:blur(2px);transition:opacity .35s;
+  }
+  #veil.hidden{opacity:0;pointer-events:none;}
+  .card{
+    width:min(440px,90vw);background:rgba(11,26,34,.82);border:1px solid rgba(255,255,255,.12);
+    border-radius:18px;padding:30px 30px 26px;color:var(--paper);text-align:center;
+    box-shadow:0 30px 80px rgba(0,0,0,.5);
+  }
+  .eyebrow{font-size:11px;letter-spacing:3.5px;text-transform:uppercase;color:var(--teal);font-weight:700;}
+  .title{font-size:30px;font-weight:800;letter-spacing:-.5px;margin:8px 0 2px;}
+  .title em{font-style:normal;color:#ff6b5e;}
+  .sub{font-size:13px;color:#cfe6ea;opacity:.85;margin-bottom:20px;}
+  .keys{display:grid;grid-template-columns:auto 1fr;gap:8px 14px;text-align:left;font-size:13px;margin:0 auto 22px;width:max-content;}
+  .keys span:first-child{font-weight:700;color:#ffd76a;font-variant-numeric:tabular-nums;}
+  kbd{background:#1c333d;border:1px solid #2f4d57;border-bottom-width:2px;border-radius:6px;padding:2px 7px;font:inherit;font-size:11.5px;}
+  .play{
+    appearance:none;border:0;cursor:pointer;font:inherit;font-weight:800;letter-spacing:.4px;
+    background:linear-gradient(180deg,#ff7a5c,#e8442f);color:#fff;padding:13px 30px;border-radius:999px;
+    box-shadow:0 10px 24px rgba(232,68,47,.4);transition:transform .12s ease, box-shadow .12s;
+  }
+  .play:hover{transform:translateY(-1px);box-shadow:0 14px 30px rgba(232,68,47,.5);}
+  .play:active{transform:translateY(0);}
+  .foot{margin-top:14px;font-size:11px;color:#9fc0c7;}
+  #loading{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
+    background:#0b1a22;color:#cfe6ea;font-size:13px;letter-spacing:1px;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="cross"></div>
+<div id="hud">
+  <div><b>WASD</b> / Arrows — move &nbsp;·&nbsp; <b>Mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — jog &nbsp;·&nbsp; <b>Scroll</b> — zoom &nbsp;·&nbsp; <b>O</b> — map view</div>
+</div>
+
+<div id="loading">Building the boardwalk…</div>
+
+<div id="veil" class="hidden">
+  <div class="card">
+    <div class="eyebrow">Ocean City · Maryland</div>
+    <div class="title"><em>Coconuts</em> Beach Bar</div>
+    <div class="sub">A walkable recreation of the outdoor patio &amp; beach seating.</div>
+    <div class="keys">
+      <span>W A S D</span><span>Walk around the patio</span>
+      <span>Mouse</span><span>Look</span>
+      <span>Shift</span><span>Jog faster</span>
+      <span>Scroll</span><span>Zoom in / out</span>
+      <span>O</span><span>Top-down map view</span>
+      <span>T</span><span>Fast-forward time of day</span>
+      <span>Esc</span><span>Release the cursor</span>
+    </div>
+    <button class="play" id="playBtn">Enter the patio</button>
+    <div class="foot">Mouse capture if your browser allows it — otherwise click-drag to look</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+"use strict";
+
+// ---------------------------------------------------------------------------
+// World dimensions (meters). X = length (38), Z = width (25).
+// Orientation: hotel along west (low Z), bar/castle at north (high X),
+// beach/ocean to the east (high Z), parking/entrance to the south (low X).
+// ---------------------------------------------------------------------------
+const LEN = 38, WID = 25;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x5fb0e6);
+scene.fog = new THREE.Fog(0xd9e7ee, 80, 330);   // soft salty haze; clean foreground
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.05, 600);
+const player = {
+  pos: new THREE.Vector3(6, 0, 12),   // open patio, clear of all colliders
+  vel: new THREE.Vector3(),
+  feetY: 0, yaw: -Math.PI/2, pitch: -0.02,
+  radius: 0.34, eye: 1.65, bob: 0, step: 0,
+  _tx: null, _ty: null
+};
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+document.getElementById("app").appendChild(renderer.domElement);
+renderer.domElement.tabIndex = 0;
+renderer.domElement.style.outline = "none";
+
+// ---------------------------------------------------------------------------
+// Lighting — soft, even, SATURATED daylight (low total exposure, no blowout)
+// ---------------------------------------------------------------------------
+const hemi = new THREE.HemisphereLight(0xcfe8fb, 0xcdb98c, 0.55);
+scene.add(hemi);
+
+const sun = new THREE.DirectionalLight(0xfff3df, 0.7);
+sun.position.set(-30, 48, 22);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 170;
+sun.shadow.camera.left = -24;
+sun.shadow.camera.right = 24;
+sun.shadow.camera.top = 24;
+sun.shadow.camera.bottom = -24;
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.025;   // stops soft-shadow edges from crawling/buzzing
+scene.add(sun);
+const amb = new THREE.AmbientLight(0xffffff, 0.12);   // gentle fill only
+scene.add(amb);
+renderer.toneMapping = THREE.NoToneMapping;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const COL = []; // collider AABBs {minX,maxX,minZ,maxZ}
+function addCollider(minX,maxX,minZ,maxZ){ COL.push({minX,maxX,minZ,maxZ}); }
+
+function mat(color, opts){ return new THREE.MeshStandardMaterial(Object.assign({color:color, roughness:0.92, metalness:0.0}, opts||{})); }
+function box(w,h,d,m){ const g=new THREE.Mesh(new THREE.BoxGeometry(w,h,d), m); g.castShadow=true; g.receiveShadow=true; return g; }
+
+// --- canvas texture helpers -------------------------------------------------
+function cvs(w,h){ const c=document.createElement("canvas"); c.width=w; c.height=h; return c; }
+function woodTex(){ const c=cvs(256,64),x=c.getContext("2d");
+  x.fillStyle="#a9682f"; x.fillRect(0,0,256,64);
+  for(let i=0;i<70;i++){ const y=Math.random()*64, w=20+Math.random()*60;
+    const sh=['#8f561f','#b9762f','#c2853f','#965a27','#a96a30'][i%5];
+    x.fillStyle=sh; x.fillRect(Math.random()*256,y,w,2+Math.random()*4); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+function barFrontTex(){ const c=cvs(128,128),x=c.getContext("2d");   // red panel + cream frame + red base
+  x.fillStyle="#c2402f"; x.fillRect(0,0,128,128);                    // body red
+  x.fillStyle="#ecdfc0"; x.fillRect(8,10,112,78);                    // cream frame
+  x.fillStyle="#cf2a20"; x.fillRect(16,18,96,62);                    // inset red panel
+  x.fillStyle="#a8201a"; x.fillRect(20,22,88,54);                    // darker inner
+  x.fillStyle="#e23026"; x.fillRect(0,98,128,30);                    // red kickbase
+  x.fillStyle="#7d1813"; x.fillRect(0,120,128,8);
+  const t=new THREE.CanvasTexture(c); t.wrapS=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+function brickTex(base,line){ const c=cvs(128,128),x=c.getContext("2d");
+  x.fillStyle=base; x.fillRect(0,0,128,128);
+  x.strokeStyle=line; x.lineWidth=1.4;
+  for(let r=0;r<8;r++){ const y=r*16; x.beginPath(); x.moveTo(0,y); x.lineTo(128,y); x.stroke();
+    const off=(r%2)*16; for(let bx=off; bx<128; bx+=32){ x.beginPath(); x.moveTo(bx,y); x.lineTo(bx,y+16); x.stroke(); } }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+const TEX_WOOD = woodTex();
+const TEX_BARFRONT = barFrontTex();
+const TEX_CASTLEBRICK = brickTex("#f3f0e8","#dcd6c8");
+const FANS = [];   // ceiling fans, spun in the render loop
+
+// red standing-seam metal roofing (vertical ribs + faint panel streaks)
+function metalRoofTex(){ const c=cvs(128,128),x=c.getContext("2d");
+  x.fillStyle="#c8402e"; x.fillRect(0,0,128,128);
+  for(let i=0;i<128;i+=10){ x.fillStyle="#a83321"; x.fillRect(i,0,1.6,128); x.fillStyle="#d9533f"; x.fillRect(i+2,0,1.2,128); }
+  for(let i=0;i<40;i++){ x.fillStyle="rgba(150,40,28,0.10)"; x.fillRect(0,Math.random()*128,128,1); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+// shaggy thatch (vertical straw strands, tonal variation)
+function thatchTex(){ const c=cvs(128,128),x=c.getContext("2d");
+  x.fillStyle="#b8945a"; x.fillRect(0,0,128,128);
+  for(let i=0;i<420;i++){ const sh=['#c9a86a','#a8854c','#d3b577','#9c7b44','#bf9c60'][i%5];
+    x.strokeStyle=sh; x.lineWidth=0.8+Math.random()*1.2; const sx=Math.random()*128, sy=Math.random()*128;
+    x.beginPath(); x.moveTo(sx,sy); x.lineTo(sx+(Math.random()-0.5)*3, sy+6+Math.random()*10); x.stroke(); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+// brick paver floor — running-bond bricks tinted #a18979 with mortar
+function paverBrickTex(){ const c=cvs(256,256),x=c.getContext("2d");
+  x.fillStyle="#8c7567"; x.fillRect(0,0,256,256);                 // mortar
+  const bw=64,bh=32, shades=['#a18979','#9a8270','#a98f7e','#977e6c','#a88f7d','#9b8472'];
+  for(let row=0; row*bh<256; row++){ const off=(row%2)*bw/2;
+    for(let bx=-bw; bx<256; bx+=bw){ const px=bx+off+2.2, py=row*bh+2.2;
+      x.fillStyle=shades[Math.floor(Math.random()*shades.length)]; x.fillRect(px,py,bw-4.4,bh-4.4); } }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+const TEX_METALROOF = metalRoofTex();
+const TEX_THATCH = thatchTex();
+// soft radial falloff for glow sprites (prevents hard square edges)
+function softGlowTex(){ const c=cvs(64,64),x=c.getContext("2d");
+  const g=x.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0,"rgba(255,255,255,1)"); g.addColorStop(0.35,"rgba(255,255,255,0.6)"); g.addColorStop(1,"rgba(255,255,255,0)");
+  x.fillStyle=g; x.fillRect(0,0,64,64);
+  const t=new THREE.CanvasTexture(c); t.encoding=THREE.sRGBEncoding; return t; }
+const GLOW_TEX = softGlowTex();
+// diagonal diamond rustication for the castle walls (matches the quilted stucco)
+function diamondTex(){ const c=cvs(128,128),x=c.getContext("2d");
+  x.fillStyle="#f1eee6"; x.fillRect(0,0,128,128);
+  x.strokeStyle="#d6cfc0"; x.lineWidth=1.4; const step=22;
+  for(let i=-160;i<300;i+=step){ x.beginPath(); x.moveTo(i,0); x.lineTo(i+128,128); x.stroke();
+    x.beginPath(); x.moveTo(i,128); x.lineTo(i+128,0); x.stroke(); }
+  x.strokeStyle="rgba(255,255,255,0.5)"; x.lineWidth=0.7;
+  for(let i=-160;i<300;i+=step){ x.beginPath(); x.moveTo(i+1,1); x.lineTo(i+129,129); x.stroke(); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+// pierced breeze-block pattern for the hotel balcony railings
+function breezeBlockTex(){ const c=cvs(128,128),x=c.getContext("2d");
+  x.fillStyle="#f3f0ea"; x.fillRect(0,0,128,128);
+  x.fillStyle="#b9b3a6";
+  for(let gx=0;gx<128;gx+=32) for(let gy=0;gy<128;gy+=32){
+    x.save(); x.translate(gx+16,gy+16); x.rotate(Math.PI/4);
+    x.fillRect(-7,-7,14,14); x.restore(); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+const TEX_DIAMOND = diamondTex();
+const TEX_BREEZE = breezeBlockTex();
+// a proper rounded surfboard outline (extruded shape, not a box)
+function makeSurfboardGeo(){
+  const L=2.0, W=0.44, s=new THREE.Shape();
+  s.moveTo(0,0);
+  s.quadraticCurveTo(W*0.6, L*0.12, W*0.5, L*0.42);
+  s.quadraticCurveTo(W*0.5, L*0.82, 0, L);
+  s.quadraticCurveTo(-W*0.5, L*0.82, -W*0.5, L*0.42);
+  s.quadraticCurveTo(-W*0.6, L*0.12, 0, 0);
+  const geo=new THREE.ExtrudeGeometry(s,{depth:0.06,bevelEnabled:true,bevelThickness:0.04,bevelSize:0.05,bevelSegments:2,steps:1});
+  geo.center(); return geo;
+}
+const SURF_GEO = makeSurfboardGeo();
+
+// day/night: collections that react to the cycle (populated as the world is built)
+const LAMP_LIGHTS=[], LAMP_GLASS=[], LAMP_HALOS=[], STRING_MATS=[], LITWIN=[], BAR_LIGHTS=[], BAR_BULBS=[];
+
+// ---------------------------------------------------------------------------
+// Ground: big sand plane, terracotta paver patio, ocean strip
+// ---------------------------------------------------------------------------
+const sand = new THREE.Mesh(new THREE.PlaneGeometry(400,400), mat(0xddc486,{roughness:1}));
+sand.rotation.x = -Math.PI/2;
+sand.position.set(LEN/2, 0, WID/2);
+sand.receiveShadow = true;
+scene.add(sand);
+
+// brick paver patio floor (#a18979 bricks, running bond) — extended west to the hotel
+const paverMat = new THREE.MeshStandardMaterial({map:paverBrickTex(), roughness:1});
+paverMat.map.repeat.set(16,9);
+const paver = new THREE.Mesh(new THREE.PlaneGeometry(34, 18), paverMat);
+paver.rotation.x = -Math.PI/2;
+paver.position.set(17.5, 0.02, 8.0);
+paver.receiveShadow = true;
+scene.add(paver);
+// (brick mortar comes from the floor texture now — no separate grout overlay)
+
+// ocean beyond the beach (east) — bright turquoise, far background with depth.
+// Kept just above the sand plane so it always reads as water past the shoreline.
+const ocean = new THREE.Mesh(new THREE.PlaneGeometry(600,340), mat(0x2fb0c6,{roughness:0.3, metalness:0.1}));
+ocean.rotation.x = -Math.PI/2;
+ocean.position.set(LEN/2, 0.06, 96 + 170);
+scene.add(ocean);
+// a deeper-blue band farther out for sea depth
+const ocean2 = new THREE.Mesh(new THREE.PlaneGeometry(600,200), mat(0x1f7fb0,{roughness:0.3, metalness:0.1}));
+ocean2.rotation.x = -Math.PI/2; ocean2.position.set(LEN/2, 0.055, 96 + 280); scene.add(ocean2);
+
+// ---------------------------------------------------------------------------
+// Buildings
+// ---------------------------------------------------------------------------
+const wallMat = mat(0xf6f4ef,{roughness:0.95});
+const roofMat = new THREE.MeshStandardMaterial({map:TEX_METALROOF.clone(), roughness:0.55, metalness:0.25});
+roofMat.map.repeat.set(8,8); roofMat.map.needsUpdate=true;
+const darkGlass = mat(0x2a3138,{roughness:0.5, metalness:0.2});
+
+// --- Hotel: long 3-story building along the west edge (low Z) ---
+function buildHotel(){
+  const g = new THREE.Group();
+  const W = 27, H = 10.5, D = 9;       // length(X), height, depth(Z)
+  const cx = 13.5, cz = -5.5;          // moved further west to widen the walkway
+  const hotelBody = mat(0xdcd5c6,{roughness:0.95});  // warm grey-tan stucco
+  const trimMat   = mat(0xf5f2ea,{roughness:0.9});   // bright white trim
+  const doorMat   = mat(0x4a3525,{roughness:0.6});   // dark brown wood doors
+  const breezeMat = new THREE.MeshStandardMaterial({map:TEX_BREEZE.clone(), roughness:0.9});
+  breezeMat.map.repeat.set(20,1); breezeMat.map.needsUpdate=true;
+  const body = box(W,H,D, hotelBody);
+  body.position.set(cx, H/2, cz);
+  g.add(body);
+  // red roof (low hip-style cap)
+  const roof = box(W+1.2, 1.0, D+1.2, roofMat);
+  roof.position.set(cx, H+0.5, cz);
+  g.add(roof);
+  // three balcony levels facing the patio (east face)
+  const faceZ = cz + D/2 + 0.06;
+  const nBays = 9, bx0 = cx-(W-3)/2, bdx=(W-3)/8;
+  for(let floor=0; floor<3; floor++){
+    const y = 2.0 + floor*3.0;
+    const recess = box(W-0.6,2.6,0.1, mat(0x4a463f));
+    recess.position.set(cx, y+0.3, faceZ-0.05); g.add(recess);
+    const slab = box(W-0.6,0.2,0.7, trimMat); slab.position.set(cx, y-0.7, faceZ+0.30); g.add(slab);
+    const rail = box(W-0.6,0.55,0.08, breezeMat); rail.position.set(cx, y-0.35, faceZ+0.62); g.add(rail);
+    const cap  = box(W-0.5,0.08,0.14, trimMat); cap.position.set(cx, y-0.06, faceZ+0.62); g.add(cap);
+    for(let i=0;i<nBays;i++){
+      const wx = bx0 + i*bdx;
+      if(i%2===0){ const door=box(1.0,2.2,0.1, doorMat); door.position.set(wx, y+0.1, faceZ+0.04); g.add(door); }
+      else {
+        // only some rooms are lit at night, for realism
+        const lit = Math.random() < 0.42;
+        const wm = lit ? new THREE.MeshStandardMaterial({color:0x2a3138, roughness:0.5, emissive:0xffca73, emissiveIntensity:0})
+                       : darkGlass;
+        const win = box(1.3,1.7,0.1, wm); win.position.set(wx, y+0.3, faceZ+0.04); g.add(win);
+        if(lit) LITWIN.push(wm);
+      }
+      const col=box(0.18,2.9,0.18, trimMat); col.position.set(wx-bdx/2, y+0.3, faceZ+0.66); g.add(col);
+    }
+  }
+  const par=box(W-0.6,0.5,0.1, trimMat); par.position.set(cx, H-0.1, faceZ+0.5); g.add(par);
+  g.traverse(o=>{ if(o.isMesh){o.castShadow=true;o.receiveShadow=true;} });
+  scene.add(g);
+  addCollider(cx-W/2, cx+W/2, cz-D/2, cz+D/2+0.2);
+}
+buildHotel();
+
+// --- Castle tower (the white "Coconuts" landmark) at north, behind the bar ---
+function buildCastle(){
+  const g = new THREE.Group();
+  const W=13, H=20, D=10, cx=LEN+1.5, cz=11;
+  // diamond-rusticated white walls (matches the quilted stucco in the photo)
+  const brickMat=new THREE.MeshStandardMaterial({map:TEX_DIAMOND.clone(), roughness:0.95});
+  brickMat.map.repeat.set(8,12); brickMat.map.needsUpdate=true;
+  const body = box(W,H,D, brickMat); body.position.set(cx,H/2,cz); g.add(body);
+  const faceX = cx - W/2 - 0.05;
+  // subtle white corner pilaster strips dividing the facade
+  for(const pz of [cz-D/2+0.6, cz+D/2-0.6]){ const pil=box(0.5,H-0.5,0.6, wallMat); pil.position.set(faceX+0.1, (H-0.5)/2, pz); g.add(pil); }
+  // low red tile roof behind the parapet
+  const roof = box(W-0.6,0.5,D-0.6, roofMat); roof.position.set(cx,H+0.25,cz); g.add(roof);
+  // crenellated parapet + raised central merlon
+  for(let i=0;i<5;i++){ const b=box(1.6,1.4,D, wallMat); b.position.set(cx-W/2+1.4+i*2.6, H+0.7, cz); g.add(b); }
+  const merlon=box(3.4,2.8,D, wallMat); merlon.position.set(cx, H+1.4, cz); g.add(merlon);
+  // dark diamond accents in a row
+  for(let i=0;i<5;i++){ const dm=box(0.15,0.5,0.5, mat(0x1c1f24)); dm.rotation.x=Math.PI/4;
+    dm.position.set(faceX, 8.3, cz-5+i*2.5); g.add(dm); }
+  // tall arched dark openings flanking the centre
+  function archOpening(z){
+    const panel=box(0.18,2.2,1.0, mat(0x16181d)); panel.position.set(faceX,5.9,z); g.add(panel);
+    const arc=new THREE.Mesh(new THREE.CircleGeometry(0.5,14,0,Math.PI), mat(0x16181d));
+    arc.rotation.y=-Math.PI/2; arc.position.set(faceX,7.0,z); g.add(arc);
+  }
+  [cz-3.6, cz-2.1, cz+2.1, cz+3.6].forEach(archOpening);
+  // statue niches (dark recesses) with little dark figures, above the arches
+  for(const nz of [cz-4.6, cz+4.6]){
+    const niche=box(0.16,1.2,0.5, mat(0x20242a)); niche.position.set(faceX,9.0,nz); g.add(niche);
+    const fig=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.09,0.55,6), mat(0x2b2f36)); fig.position.set(faceX-0.05,8.85,nz); g.add(fig);
+    const fh=new THREE.Mesh(new THREE.SphereGeometry(0.07,6,6), mat(0x2b2f36)); fh.position.set(faceX-0.05,9.22,nz); g.add(fh);
+  }
+  // oriel bay windows: white framed bays, paned glass, little red hip roofs
+  function oriel(z){
+    const bay=box(0.95,4.2,2.0, wallMat); bay.position.set(faceX-0.48,12.6,z); g.add(bay);
+    const sill=box(1.0,0.16,2.15, wallMat); sill.position.set(faceX-0.48,10.55,z); g.add(sill);
+    // two rows of three panes with white mullions
+    for(const wy of [11.5,13.4]){
+      for(const wz of [z-0.58,z,z+0.58]){
+        const pane=box(0.06,1.4,0.46, darkGlass); pane.position.set(faceX-0.97,wy,wz); g.add(pane);
+      }
+      const mh=box(0.08,0.1,1.9, wallMat); mh.position.set(faceX-0.985,wy,z); g.add(mh);
+    }
+    for(const wz of [z-0.85,z-0.29,z+0.29,z+0.85]){ const mv=box(0.08,3.2,0.08, wallMat); mv.position.set(faceX-0.985,12.45,wz); g.add(mv); }
+    const rf=new THREE.Mesh(new THREE.ConeGeometry(1.7,1.0,4), roofMat); rf.rotation.y=Math.PI/4;
+    rf.scale.set(0.6,1,1.45); rf.position.set(faceX-0.48,15.2,z); g.add(rf);
+  }
+  oriel(cz-3.6); oriel(cz+3.6);
+  // Coconuts sign — textured plane, held off the wall + alphaTest so it can't flicker.
+  // RULE for all linked images: build on a unit plane and set the height from the
+  // image's true width:height once loaded, so proportions are never distorted.
+  const signMat = new THREE.MeshBasicMaterial({ transparent:true, alphaTest:0.5,
+    side:THREE.FrontSide, depthWrite:true, color:0xffffff, opacity:0 });
+  const SIGN_W = 4.6;                                   // fixed footprint along the wall
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1,1), signMat);
+  sign.scale.set(SIGN_W, 1.6, 1);                       // placeholder until image loads
+  sign.position.set(faceX - 0.25, 9.5, cz);
+  sign.rotation.y = -Math.PI/2;
+  sign.renderOrder = 2;
+  g.add(sign);
+  const SIGN_URL = "https://thelossless.neocities.org/Coconuts/0cd1c8b7-a40c-4555-8bc1-ae124471d9dd.png";
+  const SIGN_PROXY = "https://images.weserv.nl/?url=thelossless.neocities.org/Coconuts/0cd1c8b7-a40c-4555-8bc1-ae124471d9dd.png&output=png";
+  const ldr = new THREE.TextureLoader(); ldr.setCrossOrigin("anonymous");
+  const applyTex = (tex)=>{ tex.encoding=THREE.sRGBEncoding;
+    const img=tex.image, aspect=(img&&img.width&&img.height)?img.width/img.height:(SIGN_W/1.6);
+    sign.scale.set(SIGN_W, SIGN_W/aspect, 1);           // preserve width, match true proportions
+    signMat.map=tex; signMat.opacity=1; signMat.needsUpdate=true; };
+  ldr.load(SIGN_URL, applyTex, undefined, ()=>{ ldr.load(SIGN_PROXY, applyTex, undefined, ()=>{}); });
+  g.traverse(o=>{ if(o.isMesh){o.castShadow=true;o.receiveShadow=true;} });
+  scene.add(g);
+  addCollider(cx-W/2, cx+W/2, cz-D/2, cz+D/2);
+}
+buildCastle();
+
+// --- Red hip-roofed bar / kitchen structures across the north end ---
+function hipRoof(w,d,h,m){
+  // pyramidal hip roof using a 4-sided cone
+  const geo = new THREE.ConeGeometry(Math.max(w,d)*0.72, h, 4);
+  const r = new THREE.Mesh(geo, m);
+  r.rotation.y = Math.PI/4;
+  r.scale.set(w/Math.max(w,d), 1, d/Math.max(w,d));
+  r.castShadow = true; r.receiveShadow = true;
+  return r;
+}
+function buildBar(){
+  const g = new THREE.Group();
+  const Z0=4, Z1=16, ZC=(Z0+Z1)/2, len=Z1-Z0;
+  // back kitchen building (north) with red hip roof
+  const kitchen=box(4, 4.6, len, wallMat); kitchen.position.set(34.6, 2.3, ZC); g.add(kitchen);
+  const kroof=hipRoof(5.4, len+1.4, 1.8, roofMat); kroof.position.set(34.6, 5.4, ZC); g.add(kroof);
+  addCollider(32.6, 36.6, Z0-0.5, Z1+0.5);
+  // big red overhang roof over the open bar (low slab sloping toward the patio)
+  const roofSlab=box(6.2, 0.28, len+1.4, roofMat); roofSlab.position.set(31.0, 4.6, ZC); roofSlab.rotation.z=0.06; g.add(roofSlab);
+  // underside seen from below: light corrugated panel + wood rafters + ridge beams
+  const underside=box(5.6,0.05,len+1.0, mat(0xd7d2c4,{roughness:0.6})); underside.position.set(31.0,4.35,ZC); underside.rotation.z=0.06; g.add(underside);
+  const raftMat=mat(0x7a5532,{roughness:0.8});
+  for(let z=Z0; z<=Z1; z+=1.3){ const rf=box(5.6,0.12,0.12, raftMat); rf.position.set(31.0,4.3,z); rf.rotation.z=0.06; g.add(rf); }
+  for(const bx of [29.3,31.0,32.7]){ const bm=box(0.14,0.16,len+1.0, raftMat); bm.position.set(bx,4.3+(31-bx)*0.06,ZC); g.add(bm); }
+  // front support posts
+  for(const z of [Z0+0.3, ZC, Z1-0.3]){ const post=box(0.22,4.2,0.22, raftMat); post.position.set(28.6,2.1,z); g.add(post); addCollider(28.45,28.75,z-0.15,z+0.15); }
+  // ceiling fans (spun in the render loop)
+  (function(){ function makeFan(){ const fan=new THREE.Group();
+      const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,0.16,10), mat(0x3a3a3a)); fan.add(hub);
+      for(let i=0;i<4;i++){ const bl=box(0.9,0.03,0.22, mat(0x6a5236)); bl.position.set(0.55,0,0);
+        const arm=new THREE.Group(); arm.add(bl); arm.rotation.y=i*Math.PI/2; fan.add(arm); }
+      const rod=box(0.04,0.5,0.04, mat(0x3a3a3a)); rod.position.y=0.3; fan.add(rod); return fan; }
+    const f1=makeFan(); f1.position.set(31.0,4.05,ZC-3); g.add(f1); FANS.push(f1);
+    const f2=makeFan(); f2.position.set(31.0,4.05,ZC+3); g.add(f2); FANS.push(f2);
+  })();
+  // textured counter (wood top + red front): main run facing patio + west return
+  function counterRun(cx,cz,L,faceAxis){
+    const front=new THREE.MeshStandardMaterial({map:TEX_BARFRONT.clone(),roughness:0.7});
+    const top=new THREE.MeshStandardMaterial({map:TEX_WOOD.clone(),roughness:0.5});
+    const side=mat(0xa8241b);
+    top.map.repeat.set(Math.max(1,Math.round(L/1.5)),1); top.map.needsUpdate=true;
+    front.map.repeat.set(Math.max(1,Math.round(L/1.2)),1); front.map.needsUpdate=true;
+    let geo, mats;
+    if(faceAxis==='x'){ geo=new THREE.BoxGeometry(0.9,1.1,L); mats=[side,front,top,side,side,side]; }  // front=-X
+    else             { geo=new THREE.BoxGeometry(L,1.1,0.9); mats=[side,side,top,side,side,front]; }    // front=-Z
+    const m=new THREE.Mesh(geo,mats); m.position.set(cx,0.55,cz); m.castShadow=true; m.receiveShadow=true; g.add(m);
+  }
+  counterRun(30.4, ZC, len-1.0, 'x');
+  counterRun(31.6, Z0+0.4, 2.6, 'z');
+  addCollider(29.9, 30.9, Z0, Z1);
+  // back-bar: white-painted brick wall + built-in white shelving, fully stocked (ref images)
+  const backBrick=new THREE.MeshStandardMaterial({map:brickTex('#eef0ec','#d6d6d0'), roughness:0.95});
+  backBrick.map.repeat.set(9,5); backBrick.map.needsUpdate=true;
+  const backWall=box(0.2, 3.8, len, backBrick); backWall.position.set(32.62, 2.4, ZC); g.add(backWall);
+  const whiteShelf=mat(0xf2efe8,{roughness:0.7});      // white-painted shelving units
+  const woodEdge=mat(0x6e4a2e,{roughness:0.6});
+  const bottleCols=[0x6fae3a,0xc23a1f,0xe6c133,0x3a86b0,0x8a4fb0,0xe8862a,0x2f9aa8,0xd23b6e,0xeae0d0,0x9b6b3a,0x35506b,0xc0c4c8];
+  const shelfYs=[1.5,2.3];
+  // vertical white dividers → cubby sections, plus end panels
+  for(let z=Z0+0.4; z<=Z1-0.2; z+=2.0){ const div=box(0.36,1.9,0.07, whiteShelf); div.position.set(32.42,1.5,z); g.add(div); }
+  // white horizontal shelves with a thin wood front edge, densely stocked
+  for(const sy of shelfYs){
+    const shelf=box(0.36,0.05,len-0.9, whiteShelf); shelf.position.set(32.42,sy,ZC); g.add(shelf);
+    const edge=box(0.04,0.05,len-0.9, woodEdge); edge.position.set(32.25,sy,ZC); g.add(edge);
+    // walk the shelf placing bottles in tight random clusters with occasional gaps
+    let bz=Z0+0.55; const zEnd=Z1-0.55;
+    while(bz<zEnd){
+      const h=0.22+Math.random()*0.22, r=0.034+Math.random()*0.02;
+      const bmat=mat(bottleCols[Math.floor(Math.random()*bottleCols.length)],{roughness:0.35});
+      const b=new THREE.Mesh(new THREE.CylinderGeometry(r*0.72,r,h,7), bmat);
+      b.position.set(32.4+(Math.random()-0.5)*0.16, sy+0.025+h/2, bz+(Math.random()-0.5)*0.04); g.add(b);
+      if(Math.random()<0.6){ const neck=new THREE.Mesh(new THREE.CylinderGeometry(r*0.3,r*0.5,0.07,6), bmat);
+        neck.position.set(b.position.x, sy+0.025+h+0.035, b.position.z); g.add(neck); }
+      bz += (Math.random()<0.16) ? (0.16+Math.random()*0.24) : (r*1.7+Math.random()*0.05);
+    }
+  }
+  // lower wood speed-rail / back counter beneath the shelving
+  const lowRail=box(0.34,0.6,len-0.5, woodEdge); lowRail.position.set(32.42,0.82,ZC); g.add(lowRail);
+
+  // --- textured back-bar equipment: a stainless beverage fridge + a chest cooler ---
+  function brushedTex(base){ const c=cvs(64,128), x=c.getContext("2d");
+    const g2=x.createLinearGradient(0,0,64,0); g2.addColorStop(0,'#9aa0a6'); g2.addColorStop(0.5,base); g2.addColorStop(1,'#9aa0a6');
+    x.fillStyle=g2; x.fillRect(0,0,64,128);
+    for(let i=0;i<220;i++){ x.strokeStyle='rgba(255,255,255,'+(Math.random()*0.18)+')'; x.beginPath(); const xx=Math.random()*64; x.moveTo(xx,0); x.lineTo(xx,128); x.stroke(); }
+    const t=new THREE.CanvasTexture(c); return t; }
+  const steelMat=new THREE.MeshStandardMaterial({map:brushedTex('#d3d7db'), metalness:0.7, roughness:0.4});
+  const glassDoor=mat(0x2b3640,{roughness:0.25,metalness:0.2,transparent:true,opacity:0.78});
+  // fridge (two glass doors facing the bartender/patrons at -X)
+  (function(){ const fx=31.75, fz=6.3, w=1.4, h=1.5, d=0.62;
+    const body=box(d,h,w,steelMat); body.position.set(fx,h/2,fz); body.castShadow=true; g.add(body);
+    for(const dz of [-w/4-0.02, w/4+0.02]){ const door=box(0.04,h-0.22,w/2-0.06,glassDoor); door.position.set(fx-d/2-0.01,h/2,fz+dz); g.add(door);
+      const handle=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,h-0.5,8), mat(0xb8bcc0,{metalness:0.6,roughness:0.4})); handle.position.set(fx-d/2-0.04, h/2, fz+dz-(dz<0?-0.18:0.18)); g.add(handle);
+      // glowing interior shelf bottles
+      for(let k=0;k<3;k++){ const bb=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.035,0.16,6), mat([0x6fae3a,0xe6c133,0x3a86b0,0xc23a1f][k%4]));
+        bb.position.set(fx-0.05, 0.4+k*0.42, fz+dz); g.add(bb); } }
+    const top=box(d+0.04,0.06,w+0.04,steelMat); top.position.set(fx,h+0.03,fz); g.add(top);
+  })();
+  // chest cooler (white body, red lid, handle) on the floor
+  (function(){ const cxp=31.7, czp=12.8, w=1.15, h=0.5, d=0.6;
+    const bodyT=brushedTex('#eceae4'); bodyT.repeat.set(1,1);
+    const body=box(d,h,w,new THREE.MeshStandardMaterial({map:bodyT,roughness:0.85})); body.position.set(cxp,h/2,czp); body.castShadow=true; g.add(body);
+    const lid=box(d+0.05,0.14,w+0.05,mat(0xc0392b,{roughness:0.6})); lid.position.set(cxp,h+0.05,czp); g.add(lid);
+    const handle=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,0.5,8),mat(0x2b2b2b)); handle.rotation.x=Math.PI/2; handle.position.set(cxp-d/2-0.03,h*0.6,czp); g.add(handle);
+    for(const zb of [-w/2,0,w/2]){ const band=box(d+0.01,0.04,0.04,mat(0xbdbab2)); band.position.set(cxp,h*0.5,czp+zb*0.7); g.add(band); }
+  })();
+
+  // --- illuminated graphic on the back wall, above the shelving ---
+  (function(){
+    const sy=3.05;
+    const m=new THREE.MeshBasicMaterial({transparent:true,alphaTest:0.02,opacity:0,side:THREE.DoubleSide,toneMapped:false});
+    const p=new THREE.Mesh(new THREE.PlaneGeometry(1,1), m); p.position.set(32.5,sy,ZC); p.rotation.y=-Math.PI/2; p.renderOrder=3; g.add(p);
+    const frame=box(0.05,2.7,5.4,mat(0x2a2a2e,{roughness:0.6})); frame.position.set(32.56,sy,ZC); g.add(frame);
+    const url="https://thelossless.neocities.org/Coconuts/ChatGPT%20Image%20Jun%2018,%202026,%2009_52_43%20AM.png";
+    const proxy="https://images.weserv.nl/?url=thelossless.neocities.org%2FCoconuts%2FChatGPT%2520Image%2520Jun%252018%252C%25202026%252C%252009_52_43%2520AM.png&output=png";
+    const ldr=new THREE.TextureLoader(); ldr.setCrossOrigin("anonymous");
+    function apply(tex){ try{tex.colorSpace=THREE.SRGBColorSpace;}catch(e){}
+      const a=(tex.image&&tex.image.width)?tex.image.width/tex.image.height:2.0;
+      const H=2.5, W=H*a; p.scale.set(W,H,1); m.map=tex; m.opacity=1; m.needsUpdate=true; }
+    ldr.load(url, apply, undefined, ()=>ldr.load(proxy, apply, undefined, ()=>{}));
+    // picture lights + a warm wash that brightens at night
+    for(const z of [ZC-2.6, ZC+2.6]){ const can=box(0.18,0.1,0.5,mat(0x26262a)); can.position.set(32.2,sy+1.45,z); g.add(can);
+      const pl=new THREE.PointLight(0xfff0d0, 0.0, 7, 2); pl.position.set(31.7,sy+0.8,z); g.add(pl); BAR_LIGHTS.push(pl); }
+    const wash=new THREE.PointLight(0xffe9c4, 0.35, 8, 2); wash.position.set(31.2,sy,ZC); g.add(wash);
+  })();
+  // stools in front of the main counter
+  for(let z=Z0+1; z<Z1-0.5; z+=1.6){ const seat=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,0.08,12), mat(0x2b2b2b));
+    seat.position.set(29.5,1.0,z); g.add(seat);
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,1.0,8), mat(0x6b6b6b)); leg.position.set(29.5,0.5,z); g.add(leg); }
+  // standing drink-rail along the patio-facing perimeter (lean + place drinks here)
+  const railWood=mat(0x6e4a2e,{roughness:0.7});
+  const ledge=box(0.3,0.1,len, railWood); ledge.position.set(28.2,1.06,ZC); g.add(ledge);
+  const lrail=box(0.1,0.08,len, railWood); lrail.position.set(28.2,0.62,ZC); g.add(lrail);
+  for(let z=Z0; z<=Z1; z+=0.7){ const bal=box(0.07,1.0,0.07, railWood); bal.position.set(28.2,0.55,z); g.add(bal); }
+  addCollider(28.05, 28.4, Z0, Z1);
+  // warm lights under the bar roof (ramp on at night)
+  for(const bz of [Z0+1.5, ZC, Z1-1.5]){
+    const bulb=new THREE.Mesh(new THREE.SphereGeometry(0.12,8,8), new THREE.MeshBasicMaterial({color:0x6a5640}));
+    bulb.position.set(30.5,4.0,bz); g.add(bulb); BAR_BULBS.push(bulb.material);
+    const L=new THREE.PointLight(0xffd49a,0.0,10,2); L.position.set(30.2,3.9,bz); g.add(L); BAR_LIGHTS.push(L);
+  }
+  g.traverse(o=>{ if(o.isMesh){o.castShadow=true;o.receiveShadow=true;} });
+  scene.add(g);
+}
+buildBar();
+
+// ---------------------------------------------------------------------------
+// Umbrella + table unit (red & white striped canopy over a green table)
+// ---------------------------------------------------------------------------
+const RED = new THREE.Color(0xd6342a);
+const WHT = new THREE.Color(0xf6f3ec);
+function canopyGeometry(radius, rise, segs){
+  const pos=[], col=[];
+  const apex=[0,rise,0];
+  for(let i=0;i<segs;i++){
+    const a0=(i/segs)*Math.PI*2, a1=((i+1)/segs)*Math.PI*2;
+    const p0=[Math.cos(a0)*radius,0,Math.sin(a0)*radius];
+    const p1=[Math.cos(a1)*radius,0,Math.sin(a1)*radius];
+    pos.push(apex[0],apex[1],apex[2], p1[0],p1[1],p1[2], p0[0],p0[1],p0[2]);
+    const c=(i%2===0)?RED:WHT;
+    for(let k=0;k<3;k++) col.push(c.r,c.g,c.b);
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos,3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(col,3));
+  geo.computeVertexNormals();
+  return geo;
+}
+const CANOPY_GEO = canopyGeometry(1.35, 0.8, 16);
+const canopyMat = new THREE.MeshStandardMaterial({vertexColors:true, side:THREE.DoubleSide, roughness:0.85});
+const poleMat   = mat(0x9aa0a6,{metalness:0.4, roughness:0.5});
+const tableMat  = mat(0xcdcdcf,{roughness:0.6});   // light grey tabletops
+const chairMat  = mat(0x18402a,{roughness:0.78});   // darker green chairs
+const finialMat = mat(0xd6342a);
+
+// table candles (glow at night) + clear logo cups on random tables
+const CANDLES=[];
+const CUP_DECALS=[];
+(function(){   // load the cup logo once; applied to every cup decal when ready
+  const url="https://thelossless.neocities.org/Coconuts/ChatGPT%20Image%20Jun%2017,%202026,%2010_58_05%20PM.png";
+  const proxy="https://images.weserv.nl/?url=thelossless.neocities.org%2FCoconuts%2FChatGPT%2520Image%2520Jun%252017%252C%25202026%252C%252010_58_05%2520PM.png&output=png";
+  const ldr=new THREE.TextureLoader(); ldr.setCrossOrigin("anonymous");
+  function apply(tex){ try{tex.colorSpace=THREE.SRGBColorSpace;}catch(e){}
+    const a=(tex.image&&tex.image.width)?tex.image.width/tex.image.height:0.7;
+    CUP_DECALS.forEach(d=>{ const w=d.userData.w; d.scale.set(w, w/a, 1); d.material.map=tex; d.material.opacity=1; d.material.needsUpdate=true; }); }
+  ldr.load(url, apply, undefined, ()=>ldr.load(proxy, apply, undefined, ()=>{}));
+})();
+function makeCup(){
+  const c=new THREE.Group();
+  const cup=new THREE.Mesh(new THREE.CylinderGeometry(0.046,0.036,0.13,14), mat(0xe2edf4,{transparent:true,opacity:0.3,roughness:0.08}));
+  cup.position.y=0.065; c.add(cup);
+  const drink=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.032,0.1,12), mat(0xe8703a,{transparent:true,opacity:0.85})); drink.position.y=0.055; c.add(drink);
+  for(const sgn of [1,-1]){   // logo on front & back of the cup
+    const m=new THREE.MeshBasicMaterial({transparent:true,alphaTest:0.04,opacity:0,side:THREE.DoubleSide,depthWrite:false});
+    const dec=new THREE.Mesh(new THREE.PlaneGeometry(1,1), m); dec.userData.w=0.072; dec.scale.set(0.072,0.1,1);
+    dec.position.set(0,0.072,sgn*0.047); dec.rotation.y=sgn>0?0:Math.PI; dec.renderOrder=5; c.add(dec); CUP_DECALS.push(dec);
+  }
+  return c;
+}
+function makeCandle(){
+  const cand=new THREE.Group();
+  const wax=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.035,0.09,10), mat(0xece4d0,{roughness:0.7})); wax.position.y=0.045; cand.add(wax);
+  const flame=new THREE.Mesh(new THREE.ConeGeometry(0.02,0.06,6), new THREE.MeshBasicMaterial({color:0xffb24a,transparent:true,opacity:0,depthWrite:false})); flame.position.y=0.12; flame.userData.ph=Math.random()*6.28; cand.add(flame);
+  const glow=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xffcf80,transparent:true,opacity:0,depthWrite:false})); glow.scale.set(0.5,0.5,1); glow.position.y=0.12; cand.add(glow);
+  CANDLES.push({flame,glow});
+  return cand;
+}
+
+function makeUmbrella(withChairs){
+  const g = new THREE.Group();
+  // tiny candle on every table (lights up at night)
+  const cand=makeCandle(); cand.position.set(0.16,0.775,0.13); g.add(cand);
+  // a clear logo cup on some tables
+  if(Math.random()<0.45){ const cup=makeCup(); cup.position.set(-0.1+(Math.random()-0.5)*0.4,0.775,-0.05+(Math.random()-0.5)*0.4); cup.rotation.y=Math.random()*Math.PI*2; g.add(cup); }
+  // table top + leg
+  const top = new THREE.Mesh(new THREE.CylinderGeometry(0.62,0.62,0.07,18), tableMat);
+  top.position.y = 0.74; top.castShadow=true; top.receiveShadow=true; g.add(top);
+  const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,0.74,10), poleMat);
+  leg.position.y = 0.37; g.add(leg);
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.32,0.08,14), poleMat);
+  base.position.y = 0.04; base.receiveShadow=true; g.add(base);
+  // pole up to canopy
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.045,2.6,10), poleMat);
+  pole.position.y = 1.3; g.add(pole);
+  // canopy
+  const can = new THREE.Mesh(CANOPY_GEO, canopyMat);
+  can.position.y = 2.45; can.castShadow=true; g.add(can);
+  const fin = new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,0.22,8), finialMat);
+  fin.position.y = 3.4; g.add(fin);
+  // chairs
+  if(withChairs){
+    const offs=[[0.95,0],[-0.95,0],[0,0.95],[0,-0.95]];
+    for(const [ox,oz] of offs){
+      const seat=new THREE.Mesh(new THREE.BoxGeometry(0.42,0.08,0.42), chairMat);
+      seat.position.set(ox,0.45,oz); seat.castShadow=true; g.add(seat);
+      // four legs
+      for(const lx of [-0.16,0.16]) for(const lz of [-0.16,0.16]){
+        const leg=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.45,0.05), chairMat);
+        leg.position.set(ox+lx, 0.225, oz+lz); leg.castShadow=true; g.add(leg);
+      }
+      const backX = ox!==0 ? (ox>0?ox+0.18:ox-0.18) : ox;
+      const backZ = oz!==0 ? (oz>0?oz+0.18:oz-0.18) : oz;
+      const back=new THREE.Mesh(new THREE.BoxGeometry(0.42,0.5,0.08), chairMat);
+      if(oz!==0) back.rotation.y=0; else back.rotation.y=Math.PI/2;
+      back.position.set(backX, 0.7, backZ); g.add(back);
+    }
+  }
+  return g;
+}
+
+function placeUmbrella(x,z,withChairs,rot){
+  const u = makeUmbrella(withChairs);
+  u.position.set(x,0,z);
+  u.rotation.y = rot!==undefined ? rot : Math.random()*Math.PI*2;
+  scene.add(u);
+}
+
+// --- Organized grid A: block near the bar (north), pulled south so there is a
+//     clear standing zone + drink rail between it and the bar ---
+for(const x of [18.5, 22, 25.5]){
+  for(const z of [5, 8.2, 11.4, 14.6]){
+    placeUmbrella(x, z, true, 0);
+  }
+}
+// --- Organized grid B: lower block, leaves a pocket for the statue flower bed ---
+for(const x of [6.5, 10, 13.5]){
+  for(const z of [5, 8.2, 11.4, 14.6]){
+    if(z===5 && (x===6.5 || x===10)) continue;   // pocket for the statue bed
+    placeUmbrella(x, z, true, 0);
+  }
+}
+// --- A few scattered umbrellas spilling onto the sand (east), loosely spaced ---
+const scatter = [
+  [8,18.5],[5.5,23],[9,24.5],[12,24.5],[19.5,25],
+  [28.5,18.5],[30,21.5],[31,24.5],[24,25.5],[20.5,25.2]
+];
+for(const [x,z] of scatter) placeUmbrella(x,z,false);
+
+// ---------------------------------------------------------------------------
+// Tiki hut (thatched roof on posts) near patio/sand boundary
+// ---------------------------------------------------------------------------
+function buildTiki(cx,cz,W,D){
+  const g = new THREE.Group();
+  const postH=2.4, hw=W/2, hd=D/2;
+  const postMat=mat(0x6b4326,{roughness:0.9});
+  for(const [px,pz] of [[-hw+0.2,-hd+0.2],[hw-0.2,-hd+0.2],[-hw+0.2,hd-0.2],[hw-0.2,hd-0.2]]){
+    const p=new THREE.Mesh(new THREE.CylinderGeometry(0.11,0.13,postH,8), postMat); p.position.set(px,postH/2,pz); p.castShadow=true; g.add(p);
+  }
+  // U-shaped counter (white front, wood top) open to the front (-Z, toward the patio)
+  const cFront=mat(0xeeebe2,{roughness:0.85}), cTopM=mat(0x8a5a36,{roughness:0.5});
+  function counterSeg(w,d,x,z){ const c=box(w,1.05,d,cFront); c.position.set(x,0.52,z); c.castShadow=true; g.add(c);
+    const t=box(w+0.08,0.1,d+0.08,cTopM); t.position.set(x,1.06,z); g.add(t); }
+  counterSeg(W-0.3,0.55, 0, hd-0.5);
+  counterSeg(0.55, D-1.5, -hw+0.5, -0.2);
+  counterSeg(0.55, D-1.5,  hw-0.5, -0.2);
+  // red fascia frame at the eave
+  const fasciaM=mat(0xb23a2a,{roughness:0.7});
+  for(const [fw,fd,fx,fz] of [[W+0.6,0.34,0,-hd-0.25],[W+0.6,0.34,0,hd+0.25],[0.34,D+0.6,-hw-0.25,0],[0.34,D+0.6,hw+0.25,0]]){
+    const f=box(fw,0.34,fd,fasciaM); f.position.set(fx,postH+0.05,fz); g.add(f);
+  }
+  // rectangular thatch hip roof — layered, shaggy, with a ragged eave fringe
+  const thMap=()=>{ const m=TEX_THATCH.clone(); m.repeat.set(5,3); m.needsUpdate=true; return m; };
+  const thatchA=new THREE.MeshStandardMaterial({map:thMap(), color:0xcdb074, roughness:1});
+  const thatchB=new THREE.MeshStandardMaterial({map:thMap(), color:0xab8a52, roughness:1});
+  const Rbase=Math.max(W,D)*0.72, mx=W/Math.max(W,D), mz=D/Math.max(W,D);
+  for(const L of [{s:1.0,y:postH+0.7,m:thatchB},{s:0.8,y:postH+1.35,m:thatchA},{s:0.58,y:postH+1.95,m:thatchB},{s:0.34,y:postH+2.5,m:thatchA}]){
+    const cone=new THREE.Mesh(new THREE.ConeGeometry(Rbase,1.7,4), L.m);
+    cone.rotation.y=Math.PI/4; cone.scale.set(mx*L.s,1,mz*L.s); cone.position.y=L.y; cone.castShadow=true; g.add(cone);
+  }
+  const peri=[];
+  for(let t=0;t<=1.001;t+=1/9){ peri.push([-hw-0.3+(W+0.6)*t,-hd-0.3]); peri.push([-hw-0.3+(W+0.6)*t,hd+0.3]); }
+  for(let t=0;t<=1.001;t+=1/7){ peri.push([-hw-0.3,-hd-0.3+(D+0.6)*t]); peri.push([hw+0.3,-hd-0.3+(D+0.6)*t]); }
+  for(const [fx,fz] of peri){ const ln=0.5+Math.random()*0.4;
+    const tuft=new THREE.Mesh(new THREE.ConeGeometry(0.07,ln,4), Math.random()<0.5?thatchA:thatchB);
+    tuft.position.set(fx, postH+0.42-ln*0.3, fz); tuft.rotation.x=Math.PI; tuft.rotation.z=(Math.random()-0.5)*0.4; g.add(tuft); }
+  const cap=box(0.4,0.5,0.4,thatchB); cap.position.y=postH+3.05; g.add(cap);
+  // bottles on the back counter + a couple of jugs
+  const bottleCols=[0x6fae3a,0xc23a1f,0xe6c133,0x3a86b0,0x8a4fb0,0xe8862a,0x2f9aa8];
+  for(let i=0;i<12;i++){ const b=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,0.3+Math.random()*0.12,7), mat(bottleCols[i%bottleCols.length],{roughness:0.4}));
+    b.position.set(-W*0.4 + i*(W*0.8/11), 1.4, hd-0.5); g.add(b); }
+  for(const jx of [-0.8,0.8]){ const jug=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.18,0.42,10), mat(0x4aa0d8,{roughness:0.3,transparent:true,opacity:0.85}));
+    jug.position.set(jx,1.27,hd-0.8); g.add(jug); }
+  // colourful stools along the open front (-Z)
+  const stoolCols=[0x2f6fae,0x3aa0a8,0xe6c133,0xe8862a,0xd23b3b]; let si=0;
+  const sxs=[-hw+0.6, -hw+0.6+(W-1.2)/3, -hw+0.6+2*(W-1.2)/3, hw-0.6];
+  for(const sx of sxs){ const col=stoolCols[si++%stoolCols.length], sm=mat(col,{roughness:0.7});
+    const seat=new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.2,0.08,12), sm); seat.position.set(sx,1.05,-hd-0.45); seat.castShadow=true; g.add(seat);
+    for(const lx of [-0.13,0.13]) for(const lz of [-0.13,0.13]){ const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.035,1.0,6), sm); leg.position.set(sx+lx,0.52,-hd-0.45+lz); g.add(leg); }
+  }
+  // Coconuts logo on the three solid white counter faces (linked image, aspect preserved)
+  (function(){
+    const planes=[];
+    function decal(w,x,y,z,rotY){
+      const m=new THREE.MeshBasicMaterial({transparent:true,alphaTest:0.3,opacity:0,depthWrite:false,side:THREE.DoubleSide});
+      const p=new THREE.Mesh(new THREE.PlaneGeometry(1,1),m); p.position.set(x,y,z); p.rotation.y=rotY; p.renderOrder=4; g.add(p); planes.push({p,w});
+    }
+    const fy=0.6;
+    decal(1.8, 0, fy, hd-0.5+0.281, 0);                  // back face (+Z, beach side)
+    decal(1.5, -hw+0.5-0.281, fy, -0.2, -Math.PI/2);     // left face (-X)
+    decal(1.5,  hw-0.5+0.281, fy, -0.2,  Math.PI/2);     // right face (+X)
+    const url="https://thelossless.neocities.org/Coconuts/ChatGPT%20Image%20Jun%2017,%202026,%2011_00_17%20PM.png";
+    const proxy="https://images.weserv.nl/?url=thelossless.neocities.org%2FCoconuts%2FChatGPT%2520Image%2520Jun%252017%252C%25202026%252C%252011_00_17%2520PM.png&output=png";
+    const ldr=new THREE.TextureLoader(); ldr.setCrossOrigin("anonymous");
+    function apply(tex){ try{ tex.colorSpace=THREE.SRGBColorSpace; }catch(e){}
+      const a=(tex.image&&tex.image.width)?tex.image.width/tex.image.height:2.2;
+      planes.forEach(o=>{ o.p.scale.set(o.w,o.w/a,1); o.p.material.map=tex; o.p.material.opacity=1; o.p.material.needsUpdate=true; }); }
+    ldr.load(url, apply, undefined, ()=>ldr.load(proxy, apply, undefined, ()=>{}));
+  })();
+  g.position.set(cx,0,cz);
+  scene.add(g);
+  addCollider(cx-hw-0.3, cx+hw+0.3, cz-hd-0.3, cz+hd+0.3);
+}
+buildTiki(14, 21, 5, 4);
+
+// ---------------------------------------------------------------------------
+// Coconuts Entertainment stage — small gabled pavilion on the sand (no people)
+// ---------------------------------------------------------------------------
+function buildStage(cx,cz,rotY){
+  const g=new THREE.Group();
+  const W=4.6, D=3.0, hw=W/2, hd=D/2, deckH=0.45, postH=2.6;
+  const mkWood=(rx,ry,col,rough)=>{ let t=null; if(typeof TEX_WOOD!=="undefined"&&TEX_WOOD){ t=TEX_WOOD.clone(); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(rx,ry); t.needsUpdate=true; }
+    return new THREE.MeshStandardMaterial({map:t, color:col, roughness:rough}); };
+  const deckM=mkWood(3,2,0xc2a07a,0.85), skirtM=mkWood(4,1,0x9c7b54,0.9), roofM=mkWood(2,3,0x8a4030,0.75);
+  const postM=mat(0x7a4a36,{roughness:0.8}), redWood=mat(0x9a4636,{roughness:0.7}), whiteM=mat(0xf2efe8,{roughness:0.85});
+  // raised deck (plank top + skirt) + steps
+  const deck=box(W,0.14,D,deckM); deck.position.set(0,deckH-0.07,0); deck.castShadow=true; deck.receiveShadow=true; g.add(deck);
+  const skirt=box(W,deckH-0.14,D,skirtM); skirt.position.set(0,(deckH-0.14)/2,0); g.add(skirt);
+  for(let s=0;s<2;s++){ const st=box(W*0.5,0.15,0.34,deckM); st.position.set(0,0.075+s*0.15,-hd-0.18-s*0.32); g.add(st); }
+  // posts
+  for(const px of [-hw+0.15,hw-0.15]) for(const pz of [-hd+0.15,hd-0.15]){
+    const p=box(0.18,postH,0.18,postM); p.position.set(px,deckH+postH/2,pz); p.castShadow=true; g.add(p);
+  }
+  // white board-and-batten back wall + battens + dark window
+  const back=box(W-0.3,postH-0.2,0.12,whiteM); back.position.set(0,deckH+(postH-0.2)/2,hd-0.1); back.castShadow=true; g.add(back);
+  for(let bx=-hw+0.5; bx<=hw-0.5; bx+=0.5){ const bat=box(0.06,postH-0.3,0.04,whiteM); bat.position.set(bx,deckH+(postH-0.2)/2,hd-0.17); g.add(bat); }
+  const win=box(1.4,0.8,0.04,mat(0x33424c,{roughness:0.4,metalness:0.2})); win.position.set(0,deckH+1.4,hd-0.18); g.add(win);
+  // side rails (red wood) with balusters
+  for(const sx of [-hw+0.1,hw-0.1]){
+    const rail=box(0.1,0.12,D-0.4,redWood); rail.position.set(sx,deckH+0.95,0); g.add(rail);
+    const low=box(0.1,0.1,D-0.4,redWood); low.position.set(sx,deckH+0.45,0); g.add(low);
+    for(let bz=-hd+0.5;bz<=hd-0.5;bz+=0.45){ const bal=box(0.06,0.5,0.06,redWood); bal.position.set(sx,deckH+0.7,bz); g.add(bal); }
+  }
+  // steeper gable roof + exposed rafters + ridge beam + red trim + white gables
+  const eaveY=deckH+postH, ridgeY=eaveY+1.6, run=hw+0.35;
+  const slopeLen=Math.hypot(run,ridgeY-eaveY), ang=Math.atan2(ridgeY-eaveY,run);
+  for(let rz=-hd-0.1; rz<=hd+0.1; rz+=0.62){ const raf=box(W+0.4,0.08,0.1,postM); raf.position.set(0,eaveY+0.05,rz); g.add(raf); }
+  const ridgeBeam=box(0.12,0.14,D+0.7,postM); ridgeBeam.position.set(0,ridgeY-0.02,0); g.add(ridgeBeam);
+  for(const side of [-1,1]){
+    const slope=box(slopeLen,0.1,D+0.7,roofM); slope.position.set(side*run/2,(ridgeY+eaveY)/2+0.08,0); slope.rotation.z=side*ang; slope.castShadow=true; g.add(slope);
+    for(const tz of [-hd-0.34, hd+0.34]){ const trim=box(slopeLen,0.14,0.14,redWood); trim.position.set(side*run/2,(ridgeY+eaveY)/2+0.08,tz); trim.rotation.z=side*ang; g.add(trim); }
+  }
+  const gShape=new THREE.Shape(); gShape.moveTo(-(hw+0.2),0); gShape.lineTo(hw+0.2,0); gShape.lineTo(0,ridgeY-eaveY); gShape.lineTo(-(hw+0.2),0);
+  const gGeo=new THREE.ExtrudeGeometry(gShape,{depth:0.08,bevelEnabled:false});
+  for(const gz of [-hd-0.32,hd+0.2]){ const gable=new THREE.Mesh(gGeo,whiteM); gable.position.set(0,eaveY+0.08,gz); gable.castShadow=true; g.add(gable); }
+  // string of warm bulbs under the front eave + a warm stage light (on at night)
+  for(let bx=-hw+0.4; bx<=hw-0.4; bx+=0.55){ const bulb=new THREE.Mesh(new THREE.SphereGeometry(0.06,8,6), new THREE.MeshBasicMaterial({color:0xffe2a6}));
+    bulb.position.set(bx, eaveY-0.12, -hd-0.05); g.add(bulb); }
+  const stageLight=new THREE.PointLight(0xffdca0,0.0,6,2); stageLight.position.set(0,eaveY-0.3,-hd+0.3); g.add(stageLight); BAR_LIGHTS.push(stageLight);
+  // speakers
+  for(const sx of [-hw+0.5,hw-0.5]){ const sp=box(0.42,0.7,0.4,mat(0x18181b,{roughness:0.6})); sp.position.set(sx,deckH+0.35,-hd+0.55); sp.castShadow=true; g.add(sp); }
+  // Coconuts Entertainment logo centered on the FRONT gable (faces the crowd)
+  (function(){
+    const m=new THREE.MeshBasicMaterial({transparent:true,alphaTest:0.04,opacity:0,side:THREE.DoubleSide,depthWrite:false});
+    const p=new THREE.Mesh(new THREE.PlaneGeometry(1,1),m); p.position.set(0, eaveY+0.5, -hd-0.42); p.rotation.y=Math.PI; p.renderOrder=4; g.add(p);
+    const url="https://thelossless.neocities.org/Coconuts/ChatGPT%20Image%20Jun%2017,%202026,%2011_00_17%20PM.png";
+    const proxy="https://images.weserv.nl/?url=thelossless.neocities.org%2FCoconuts%2FChatGPT%2520Image%2520Jun%252017%252C%25202026%252C%252011_00_17%2520PM.png&output=png";
+    const ldr=new THREE.TextureLoader(); ldr.setCrossOrigin("anonymous");
+    function apply(tex){ try{tex.colorSpace=THREE.SRGBColorSpace;}catch(e){}
+      const a=(tex.image&&tex.image.width)?tex.image.width/tex.image.height:2.3;
+      const W2=2.0, H2=W2/a; p.scale.set(W2,H2,1); m.map=tex; m.opacity=1; m.needsUpdate=true; }
+    ldr.load(url, apply, undefined, ()=>ldr.load(proxy, apply, undefined, ()=>{}));
+  })();
+  g.position.set(cx,0,cz); g.rotation.y=rotY||0; scene.add(g);
+  addCollider(cx-3.0,cx+3.0,cz-2.5,cz+2.5);
+}
+buildStage(25.5, 22, 0.7);
+
+// ---------------------------------------------------------------------------
+// Palm trees
+// ---------------------------------------------------------------------------
+function makePalm(scale){
+  const g=new THREE.Group();
+  const trunkMat=mat(0x9c7b4f,{roughness:0.95});
+  const segH=0.7, n=6;
+  let prev=null;
+  for(let i=0;i<n;i++){
+    const r=0.22-i*0.02;
+    const seg=new THREE.Mesh(new THREE.CylinderGeometry(r-0.015,r,segH,8), trunkMat);
+    seg.position.set(Math.sin(i*0.5)*0.12, segH*0.5 + i*segH*0.96, 0);
+    seg.rotation.z = Math.sin(i*0.5)*0.05;
+    seg.castShadow=true; g.add(seg);
+    prev=seg;
+  }
+  const topY = n*segH*0.96;
+  const topX = Math.sin((n-1)*0.5)*0.12;
+  // crown of fronds — feathered fans of thin smooth blades (no rectangular cones)
+  const frondMat=mat(0x2f7d3f,{roughness:0.85, side:THREE.DoubleSide});
+  const frondMat2=mat(0x3c8a44,{roughness:0.85, side:THREE.DoubleSide});
+  const brownMat=mat(0xa98b56,{roughness:0.95, side:THREE.DoubleSide});
+  const NF=16;
+  for(let i=0;i<NF;i++){
+    const a=(i/NF)*Math.PI*2;
+    const brown=(i%5===0);
+    const bm = brown?brownMat:(i%2?frondMat2:frondMat);
+    const blade=new THREE.Group();                       // a feathered frond
+    for(const off of [-0.3,-0.2,-0.1,0,0.1,0.2,0.3]){
+      const len=2.6 - Math.abs(off)*2.1;
+      const sub=new THREE.Mesh(new THREE.ConeGeometry(0.13,len,8), bm);
+      sub.scale.set(0.5,1,0.11);                          // thin smooth leaf-blade
+      sub.position.y=len/2; sub.rotation.z=off*1.6;
+      sub.castShadow=true; blade.add(sub);
+    }
+    blade.position.set(topX,topY,0);
+    blade.rotation.order="YXZ";
+    blade.rotation.y=a;
+    blade.rotation.x=Math.PI/2 - (brown?0.12:0.45-(i%2)*0.14);  // mixed droop for fullness
+    g.add(blade);
+  }
+  // fibrous crownshaft bulb where the fronds meet the trunk
+  const crownBulb=new THREE.Mesh(new THREE.SphereGeometry(0.34,8,7), brownMat); crownBulb.scale.y=1.3; crownBulb.position.set(topX,topY-0.1,0); g.add(crownBulb);
+  // coconuts
+  for(let i=0;i<3;i++){
+    const c=new THREE.Mesh(new THREE.SphereGeometry(0.12,8,8), mat(0x6b4a2a));
+    c.position.set(topX+(Math.random()-0.5)*0.3, topY-0.1, (Math.random()-0.5)*0.3); g.add(c);
+  }
+  g.scale.setScalar(scale||1);
+  return g;
+}
+const palms = [
+  [10,16,1.1],[14,15.5,0.95],[15.5,15.6,1.05],[26.5,14.3,1.0],[29,16.8,1.1],
+  [7,23,1.0],[17,24,0.95],[27,23.5,1.05],[31.5,20,1.0],[4.5,13,0.9],
+  [4.5,4,0.9],[3.5,9,1.0]
+];
+const PALMS=[];
+for(const [x,z,s] of palms){
+  const p=makePalm(s); p.position.set(x,0,z); p.rotation.y=Math.random()*Math.PI*2; scene.add(p);
+  p.userData.swayPh=Math.random()*Math.PI*2; p.userData.swayAmt=0.018+Math.random()*0.02; PALMS.push(p);
+  addCollider(x-0.3,x+0.3,z-0.3,z+0.3);
+}
+
+// --- Seagulls gliding high over the beach (gentle wing-flap + slow circling) ---
+const GULLS=[];
+function makeGull(){
+  const g=new THREE.Group();
+  const gm=mat(0xf3f3f5,{roughness:0.8});
+  const body=new THREE.Mesh(new THREE.SphereGeometry(0.16,6,5), gm); body.scale.set(1,0.7,2.4); body.castShadow=true; g.add(body);
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.1,6,5), gm); head.position.set(0,0.04,0.34); g.add(head);
+  const tail=new THREE.Mesh(new THREE.ConeGeometry(0.1,0.34,4), mat(0xdedee2)); tail.rotation.x=-Math.PI/2; tail.position.set(0,0,-0.4); g.add(tail);
+  const wings=[];
+  for(const side of [-1,1]){
+    const pivot=new THREE.Group();
+    const w=new THREE.Mesh(new THREE.ConeGeometry(0.17,1.5,4), gm);
+    w.rotation.z=-side*Math.PI/2; w.position.x=side*0.78; w.scale.set(0.55,1,0.16);
+    const tip=new THREE.Mesh(new THREE.ConeGeometry(0.1,0.5,4), mat(0x8a8a90)); tip.rotation.z=-side*Math.PI/2; tip.position.x=side*1.45; tip.scale.set(0.5,1,0.14);
+    pivot.add(w); pivot.add(tip); g.add(pivot); wings.push({pivot,side});
+  }
+  g.userData.wings=wings; return g;
+}
+for(let i=0;i<6;i++){
+  const gl=makeGull();
+  gl.userData={ cx:8+Math.random()*22, cz:30+Math.random()*22, r:8+Math.random()*16,
+                y:30+Math.random()*14, ang:Math.random()*Math.PI*2, spd:(0.1+Math.random()*0.14)*(Math.random()<0.5?-1:1),
+                ph:Math.random()*Math.PI*2, flap:5+Math.random()*3, wings:gl.userData.wings };
+  gl.scale.setScalar(0.8+Math.random()*0.5); scene.add(gl); GULLS.push(gl);
+}
+
+
+// ---------------------------------------------------------------------------
+// Planters / bushes along the hotel wall + low patio edging
+// ---------------------------------------------------------------------------
+function bush(x,z,r){
+  const g=new THREE.Group();
+  const m=mat(0x377a3a,{roughness:0.95});
+  for(let i=0;i<4;i++){
+    const s=new THREE.Mesh(new THREE.SphereGeometry(r*(0.7+Math.random()*0.4),8,8), m);
+    s.position.set((Math.random()-0.5)*r, r*0.5+(Math.random()*0.2), (Math.random()-0.5)*r);
+    s.castShadow=true; g.add(s);
+  }
+  const pot=new THREE.Mesh(new THREE.CylinderGeometry(r*0.8,r*0.7,0.4,12), mat(0x7a4a32));
+  pot.position.y=0.2; pot.castShadow=true; g.add(pot);
+  g.position.set(x,0,z); scene.add(g);
+}
+for(let x=2.5; x<=25; x+=2.3){ bush(x, 1.1, 0.55); }   // row along hotel
+// flower bed strip between the two umbrella grids
+const bedMat=mat(0x6a3f2a);
+const bed=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.45,12), bedMat);
+bed.position.set(16,0.22,8.5); bed.castShadow=true; scene.add(bed);
+addCollider(15.6,16.4,2.4,14.6);
+for(let z=3;z<14;z+=1.4){ bush(16,z,0.4); }
+
+// raised brick planter beds along the sand side (east), with a walking gap
+const brickMat = mat(0x9c5a44,{roughness:0.95});
+function lowWall(x1,z1,x2,z2){
+  const dx=x2-x1, dz=z2-z1, len=Math.hypot(dx,dz);
+  const w=new THREE.Mesh(new THREE.BoxGeometry(len,0.55,0.6), brickMat);
+  w.position.set((x1+x2)/2,0.275,(z1+z2)/2);
+  w.rotation.y=-Math.atan2(dz,dx);
+  w.castShadow=true; w.receiveShadow=true; scene.add(w);
+  // dark soil cap
+  const soil=new THREE.Mesh(new THREE.BoxGeometry(len-0.1,0.06,0.42), mat(0x3a2a1c,{roughness:1}));
+  soil.position.set((x1+x2)/2,0.57,(z1+z2)/2); soil.rotation.y=-Math.atan2(dz,dx); scene.add(soil);
+}
+lowWall(2,15.7,16,15.7);     // east edge, west portion
+lowWall(20,15.7,32,15.7);    // east edge, east portion (gap in middle to walk to sand)
+addCollider(2,16,15.4,16.0);
+addCollider(20,32,15.4,16.0);
+
+// ---------------------------------------------------------------------------
+// Circular flower bed with a white statue (was the fountain) — placed in the
+// grid-B pocket, shifted right to mirror the overhead reference
+// ---------------------------------------------------------------------------
+(function(){
+  const cx=8, cz=3;
+  const g=new THREE.Group();
+  const stone=mat(0xded7c8,{roughness:0.9});
+  const soilM=mat(0x3a2a1c,{roughness:1});
+  const statueM=mat(0xeceae2,{roughness:0.85});
+  // wide flat stone footing flush on the brick (guarantees a grounded contact)
+  const footing=new THREE.Mesh(new THREE.CylinderGeometry(1.42,1.46,0.12,32), stone);
+  footing.position.set(cx,0.06,cz); footing.receiveShadow=true; g.add(footing);
+  // stone planter wall — sits on the footing; radius is well OUTSIDE the flowers
+  // so the rim is always visible and the bed reads as planted in the ground
+  const wall=new THREE.Mesh(new THREE.CylinderGeometry(1.3,1.4,0.46,32), stone);
+  wall.position.set(cx,0.29,cz); wall.castShadow=true; wall.receiveShadow=true; g.add(wall);
+  const RIM=0.52;                                   // planter rim height
+  const soil=new THREE.Mesh(new THREE.CircleGeometry(1.22,32), soilM);
+  soil.rotation.x=-Math.PI/2; soil.position.set(cx,RIM-0.06,cz); g.add(soil);   // recessed below the rim (no z-fight)
+  // low, dense flowers nestled into the soil, kept well inside the rim
+  const flowerCols=[0xe8862a,0xe6c133,0xc23a1f,0xeae0d0,0xb5546f];
+  function flowerCluster(r,a){
+    const x=cx+Math.cos(a)*r, z=cz+Math.sin(a)*r, rad=0.11+Math.random()*0.05;
+    const leaf=new THREE.Mesh(new THREE.SphereGeometry(rad,7,6), mat(0x357a3a));
+    leaf.scale.y=0.7; leaf.position.set(x, RIM-0.02, z); leaf.castShadow=true; g.add(leaf);
+    for(let k=0;k<3;k++){ const fl=new THREE.Mesh(new THREE.SphereGeometry(0.05,6,5), mat(flowerCols[Math.floor(Math.random()*flowerCols.length)]));
+      fl.position.set(x+(Math.random()-0.5)*0.16, RIM+0.07, z+(Math.random()-0.5)*0.16); g.add(fl); }
+  }
+  for(let i=0;i<26;i++){ flowerCluster(1.0, (i/26)*Math.PI*2); }
+  for(let i=0;i<18;i++){ flowerCluster(0.72,(i/18)*Math.PI*2+0.15); }
+  for(let i=0;i<11;i++){ flowerCluster(0.42,(i/11)*Math.PI*2+0.3); }
+  // classical white statue — short draped figure, standing on the soil
+  const ST=RIM-0.04;
+  const plinth=new THREE.Mesh(new THREE.CylinderGeometry(0.24,0.32,0.3,12), statueM); plinth.position.set(cx,ST+0.15,cz); plinth.castShadow=true; g.add(plinth);
+  const gown=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.24,0.62,12), statueM); gown.position.set(cx,ST+0.61,cz); gown.castShadow=true; g.add(gown);
+  for(let i=0;i<4;i++){ const a=(i/4)*Math.PI - Math.PI/2; const fold=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.04,0.56,5), statueM);
+    fold.position.set(cx+Math.cos(a)*0.16, ST+0.58, cz+Math.sin(a)*0.16); g.add(fold); }
+  const torso=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.15,0.26,10), statueM); torso.position.set(cx,ST+1.05,cz); torso.castShadow=true; g.add(torso);
+  const shoulders=new THREE.Mesh(new THREE.SphereGeometry(0.16,10,8), statueM); shoulders.scale.set(1,0.65,0.8); shoulders.position.set(cx,ST+1.19,cz); g.add(shoulders);
+  const neck=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,0.1,8), statueM); neck.position.set(cx,ST+1.29,cz); g.add(neck);
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.1,12,10), statueM); head.scale.set(0.9,1.1,0.95); head.position.set(cx,ST+1.42,cz); head.castShadow=true; g.add(head);
+  const bun=new THREE.Mesh(new THREE.SphereGeometry(0.055,8,7), statueM); bun.position.set(cx-0.06,ST+1.5,cz); g.add(bun);
+  for(const sx of [-0.13,0.13]){ const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,0.36,8), statueM);
+    arm.rotation.x=-0.9; arm.position.set(cx+sx, ST+1.04, cz+0.12); g.add(arm); }
+  const basket=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.1,0.14,10), mat(0xd8cdb0,{roughness:0.9})); basket.position.set(cx,ST+0.92,cz+0.22); basket.castShadow=true; g.add(basket);
+  for(let i=0;i<4;i++){ const fruit=new THREE.Mesh(new THREE.SphereGeometry(0.04,6,5), mat([0xe8862a,0xc23a1f,0xe6c133][i%3]));
+    fruit.position.set(cx-0.06+i*0.04, ST+1.02, cz+0.22); g.add(fruit); }
+  scene.add(g);
+  addCollider(cx-1.45, cx+1.45, cz-1.45, cz+1.45);
+})();
+
+// ---------------------------------------------------------------------------
+// South hedge with an opening at the west end, opening onto a grey parking lot
+// (mirrors the overhead: hedge across the bottom, gap at bottom-left)
+// ---------------------------------------------------------------------------
+(function(){
+  // grey parking lot south of the hedge (kept south of X≈1.2 so it never covers the patio)
+  const lot=new THREE.Mesh(new THREE.PlaneGeometry(26,36), mat(0x8c8e91,{roughness:1}));
+  lot.rotation.x=-Math.PI/2; lot.position.set(-12, 0.004, 10); scene.add(lot);
+  // painted stall lines near the opening
+  const stripeM=mat(0xd6d6d0,{roughness:1});
+  for(let i=0;i<6;i++){ const s=new THREE.Mesh(new THREE.PlaneGeometry(0.12,4.0), stripeM);
+    s.rotation.x=-Math.PI/2; s.position.set(-2.5 - i*2.3, 0.01, 3.0); scene.add(s); }
+  // a few parked cars visible through the opening (west end, low Z)
+  function car(x,z,col){
+    const b=new THREE.Mesh(new THREE.BoxGeometry(2.0,0.9,4.2), mat(col,{roughness:0.5,metalness:0.2}));
+    b.position.set(x,0.5,z); b.castShadow=true; scene.add(b);
+    const cab=new THREE.Mesh(new THREE.BoxGeometry(1.8,0.7,2.2), mat(0x2a2e33,{roughness:0.3}));
+    cab.position.set(x,1.15,z-0.2); scene.add(cab);
+  }
+  car(-4,2.6,0xb8bcc0); car(-7.5,3.3,0xcacfd3); car(-11,2.2,0x3a3f46);
+  // hedge across the south edge — opening left open at the west (low Z) end
+  const hedgeM=mat(0x2f6e33,{roughness:0.95});
+  const hedgeM2=mat(0x368039,{roughness:0.95});
+  for(let z=5; z<=22; z+=1.0){
+    for(const [hy,hr] of [[0.7,0.8],[1.5,0.78],[2.25,0.66]]){   // stacked → ~3m tall barrier
+      const h=new THREE.Mesh(new THREE.SphereGeometry(hr,7,6), Math.random()<0.5?hedgeM:hedgeM2);
+      h.scale.set(1.05,1.0,1.05); h.position.set(1.0+(Math.random()-0.5)*0.15, hy, z+(Math.random()-0.5)*0.15);
+      h.castShadow=true; scene.add(h);
+    }
+  }
+  addCollider(0.4, 1.7, 4.6, 22.6);   // hedge blocks; the gap at Z<4.6 stays walkable
+})();
+
+// trash cans / detail near entrance & a couple by the bar
+function drum(x,z,c){
+  const d=new THREE.Mesh(new THREE.CylinderGeometry(0.32,0.3,0.9,12), mat(c));
+  d.position.set(x,0.45,z); d.castShadow=true; scene.add(d);
+}
+drum(2.6,7,0x355b8c); drum(2.6,11,0x355b8c); drum(31,4,0x444);
+
+// ---------------------------------------------------------------------------
+// Atmosphere & extra detail
+// ---------------------------------------------------------------------------
+const FLAMES = [];
+const CLOUDS = [];
+const CLOUD_MATS = [];
+
+// gradient sky dome (tintable for day/night) + sun, moon, glow, water glint
+let skyDomeMat, sunMesh, sunGlow, moonMesh, waterGlint;
+(function(){
+  const c=document.createElement("canvas"); c.width=16; c.height=256;
+  const ctx=c.getContext("2d");
+  const g=ctx.createLinearGradient(0,0,0,256);
+  // light, slightly hazy base so day/night tinting reads well; warm horizon glow
+  g.addColorStop(0.00,"#bcd9f2"); g.addColorStop(0.55,"#d7ecf7");
+  g.addColorStop(0.82,"#eef3ef"); g.addColorStop(1.00,"#f4ead8");
+  ctx.fillStyle=g; ctx.fillRect(0,0,16,256);
+  const tex=new THREE.CanvasTexture(c);
+  skyDomeMat=new THREE.MeshBasicMaterial({map:tex, side:THREE.BackSide, fog:false});
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(320,24,16), skyDomeMat);
+  dome.position.set(LEN/2,0,WID/2); scene.add(dome);
+  // soft sun glow + bright disc
+  sunGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xfff2c4,transparent:true,opacity:0,depthWrite:false,fog:false}));
+  sunGlow.scale.set(110,110,1); scene.add(sunGlow);
+  sunMesh=new THREE.Mesh(new THREE.SphereGeometry(7,16,16), new THREE.MeshBasicMaterial({color:0xfff4d2,fog:false})); scene.add(sunMesh);
+  // moon
+  moonMesh=new THREE.Mesh(new THREE.SphereGeometry(5,16,16), new THREE.MeshBasicMaterial({color:0xeef0ff,fog:false})); scene.add(moonMesh);
+  // shimmering sun-glint column on the water (beach air cue)
+  waterGlint=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xffffff,transparent:true,opacity:0,depthWrite:false,fog:false}));
+  waterGlint.scale.set(26,90,1); waterGlint.position.set(LEN/2,0.3,150); scene.add(waterGlint);
+})();
+
+// drifting clouds — soft, semi-transparent billboard puffs with feathered edges
+(function(){
+  const cc=cvs(160,128), x=cc.getContext("2d");
+  // build a fluffy cumulus silhouette from many soft radial blobs
+  const blobs=[[80,86,30],[52,90,24],[108,90,24],[66,74,26],[96,74,26],[80,64,24],[40,96,16],[120,96,16],[58,100,14],[102,100,14]];
+  for(const [bx,by,r] of blobs){
+    const grd=x.createRadialGradient(bx,by,0,bx,by,r);
+    grd.addColorStop(0,"rgba(255,255,255,0.5)"); grd.addColorStop(0.55,"rgba(255,255,255,0.32)"); grd.addColorStop(1,"rgba(255,255,255,0)");
+    x.fillStyle=grd; x.beginPath(); x.arc(bx,by,r,0,7); x.fill();
+  }
+  const ctex=new THREE.CanvasTexture(cc); try{ctex.colorSpace=THREE.SRGBColorSpace;}catch(e){ctex.encoding=THREE.sRGBEncoding;}
+  const cloudMat=new THREE.SpriteMaterial({map:ctex, color:0xffffff, transparent:true, opacity:0.78, depthWrite:false, fog:false});
+  CLOUD_MATS.push(cloudMat);
+  for(let i=0;i<16;i++){
+    const cloud=new THREE.Group();
+    const puffs=3+Math.floor(Math.random()*4);
+    for(let p=0;p<puffs;p++){
+      const sp=new THREE.Sprite(cloudMat);
+      const w=22+Math.random()*22;
+      sp.scale.set(w, w*(0.52+Math.random()*0.16), 1);
+      sp.position.set((p-puffs/2)*w*0.46, (Math.random()-0.5)*3, (Math.random()-0.5)*5);
+      cloud.add(sp);
+    }
+    cloud.position.set(-70+Math.random()*210, 42+Math.random()*26, -40+Math.random()*180);
+    cloud.userData.spd=0.16+Math.random()*0.4;
+    scene.add(cloud); CLOUDS.push(cloud);
+  }
+})();
+
+// simple beachgoers
+// (people removed for now — to be revisited later)
+
+// ornate black iron lampposts (the signature fixtures dotted through the patio)
+function makeLamppost(x,z){
+  const g=new THREE.Group();
+  const ironMat=mat(0x14171b,{roughness:0.5,metalness:0.5});
+  const base=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.30,0.45,12),ironMat); base.position.y=0.225; base.castShadow=true; g.add(base);
+  const collar=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.22,0.18,12),ironMat); collar.position.y=0.5; g.add(collar);
+  const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.065,0.085,3.0,10),ironMat); pole.position.y=2.0; pole.castShadow=true; g.add(pole);
+  const cage=new THREE.Mesh(new THREE.CylinderGeometry(0.26,0.20,0.5,4),ironMat); cage.rotation.y=Math.PI/4; cage.position.y=3.6; g.add(cage);
+  const glassMat=new THREE.MeshBasicMaterial({color:0x6a6048});   // dim by day, glows at night
+  const glass=new THREE.Mesh(new THREE.BoxGeometry(0.3,0.42,0.3), glassMat); glass.position.y=3.6; g.add(glass); LAMP_GLASS.push(glassMat);
+  const roof=new THREE.Mesh(new THREE.ConeGeometry(0.30,0.32,4),ironMat); roof.rotation.y=Math.PI/4; roof.position.y=3.96; g.add(roof);
+  const finial=new THREE.Mesh(new THREE.SphereGeometry(0.06,8,8),ironMat); finial.position.y=4.16; g.add(finial);
+  const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xffdd9a,transparent:true,opacity:0.0,depthWrite:false}));
+  halo.scale.set(1.8,1.8,1); halo.position.y=3.6; g.add(halo); LAMP_HALOS.push(halo.material);
+  const L=new THREE.PointLight(0xffd9a0,0.0,13,2); L.position.set(0,3.6,0); g.add(L); LAMP_LIGHTS.push(L);
+  g.position.set(x,0,z); scene.add(g);
+  addCollider(x-0.28,x+0.28,z-0.28,z+0.28);
+}
+// placed along edges and aisles, kept out of the hotel walkway and the bar approach
+// lining the entry walkway, the hotel side, and the beach-front edge at even spacing
+[[11,3.5],[22,3.5],[4,11],[8,16.8],[16.5,17],[26,16.5]]
+  .forEach(p=>makeLamppost(p[0],p[1]));
+
+// --- bamboo tiki torches (lit flames day & night, warm glow at night) ---
+function makeTorch(x,z){
+  const g=new THREE.Group();
+  const bamboo=mat(0x7a5a32,{roughness:0.85});
+  const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,2.2,8),bamboo); pole.position.y=1.1; pole.castShadow=true; g.add(pole);
+  for(const ny of [0.5,1.1,1.7]){ const ring=new THREE.Mesh(new THREE.CylinderGeometry(0.096,0.096,0.05,8),mat(0x5e4528)); ring.position.y=ny; g.add(ring); }
+  const cup=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.1,0.22,10),mat(0x2a2a2e,{metalness:0.4,roughness:0.5})); cup.position.y=2.28; g.add(cup);
+  const flame=new THREE.Mesh(new THREE.ConeGeometry(0.13,0.5,8), new THREE.MeshBasicMaterial({color:0xff8a1e,transparent:true,opacity:0.95,depthWrite:false}));
+  flame.position.y=2.62; flame.userData.ph=Math.random()*6.28; g.add(flame); FLAMES.push(flame);
+  const core=new THREE.Mesh(new THREE.ConeGeometry(0.07,0.32,8), new THREE.MeshBasicMaterial({color:0xffe27a,depthWrite:false}));
+  core.position.y=2.6; core.userData.ph=flame.userData.ph; g.add(core); FLAMES.push(core);
+  const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xffb24a,transparent:true,opacity:0.4,depthWrite:false})); halo.scale.set(1.5,1.5,1); halo.position.y=2.62; g.add(halo);
+  const L=new THREE.PointLight(0xff9a3c,0.45,7,2); L.position.set(0,2.55,0); g.add(L); LAMP_LIGHTS.push(L);
+  g.position.set(x,0,z); scene.add(g);
+  addCollider(x-0.16,x+0.16,z-0.16,z+0.16);
+}
+[[17.5,16.5],[20.5,17],[24.5,16.5],[17.5,21],[10,18],[29,17]].forEach(p=>makeTorch(p[0],p[1]));
+
+// --- beach loungers out on the sand, facing the ocean ---
+function makeLounger(x,z,rotY,col){
+  const g=new THREE.Group();
+  const fm=mat(col,{roughness:0.7}), frame=mat(0xdedee2,{roughness:0.5,metalness:0.3});
+  const seat=box(0.6,0.08,1.4,fm); seat.position.set(0,0.35,0); seat.castShadow=true; g.add(seat);
+  const back=box(0.6,0.08,0.72,fm); back.position.set(0,0.55,-0.78); back.rotation.x=0.6; back.castShadow=true; g.add(back);
+  for(const lx of [-0.26,0.26]) for(const lz of [-0.6,0.6]){ const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,0.35,6),frame); leg.position.set(lx,0.17,lz); g.add(leg); }
+  g.position.set(x,0,z); g.rotation.y=rotY; scene.add(g);
+}
+[[8,27,0,0x3a6ea5],[10.6,27,0.1,0xeeeeee],[13.2,27.3,-0.08,0x3a6ea5],[23,27,0.05,0xd9544a],[25.6,27.4,0.12,0xeeeeee]]
+  .forEach(p=>makeLounger(p[0],p[1],p[2],p[3]));
+
+// --- bar-top details on the back counter: blenders, a stack of cups, a tip jar ---
+(function(){
+  function blender(x,z){
+    const base=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.14,0.16,12), mat(0x222226,{metalness:0.3,roughness:0.5})); base.position.set(x,1.22,z); scene.add(base);
+    const jar=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.08,0.3,10), mat(0xbfe0ea,{transparent:true,opacity:0.45,roughness:0.1})); jar.position.set(x,1.45,z); scene.add(jar);
+    const drink=new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.07,0.18,10), mat(0xe66a3a)); drink.position.set(x,1.39,z); scene.add(drink);
+  }
+  blender(32.3,6.3); blender(32.3,7.1);
+  for(let k=0;k<5;k++){ const cup=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.055,0.12,10), mat(0xf0f0f0,{roughness:0.6})); cup.position.set(32.32,1.22+k*0.05,9.2); scene.add(cup); }
+  const tip=new THREE.Mesh(new THREE.CylinderGeometry(0.11,0.1,0.26,12), mat(0xcfeaf0,{transparent:true,opacity:0.35,roughness:0.1})); tip.position.set(32.3,1.31,12.8); scene.add(tip);
+  const bills=new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.09,0.14,10), mat(0x4a9a5a,{roughness:0.85})); bills.position.set(32.3,1.27,12.8); scene.add(bills);
+})();
+
+// --- colourful beach balls on the sand ---
+(function(){
+  const cols=[0xe23b3b,0xf2c53d,0x2f7fc4];
+  [[18,25.6,0.95],[12,26,0.85],[27.5,25.8,0.9]].forEach(([x,z,s])=>{
+    const ball=new THREE.Mesh(new THREE.SphereGeometry(0.35*s,14,12), mat(0xfafafa,{roughness:0.5}));
+    for(let k=0;k<3;k++){ const gore=new THREE.Mesh(new THREE.SphereGeometry(0.353*s,14,12, k*2.094, 1.02), mat(cols[k],{roughness:0.5})); ball.add(gore); }
+    ball.position.set(x,0.35*s,z); ball.castShadow=true; scene.add(ball);
+  });
+})();
+
+// festive string lights over the patio (dim by day, glow at night)
+const STR_MAT=new THREE.MeshBasicMaterial({color:0x6b6149, fog:false}); STRING_MATS.push(STR_MAT);
+function stringLights(x1,z1,x2,z2,y,n){
+  for(let i=0;i<=n;i++){
+    const t=i/n, x=x1+(x2-x1)*t, z=z1+(z2-z1)*t, sag=Math.sin(t*Math.PI)*0.55;
+    const b=new THREE.Mesh(new THREE.SphereGeometry(0.06,6,6),STR_MAT);
+    b.position.set(x, y-sag, z); scene.add(b);
+  }
+}
+stringLights(2.5,15.6,16,15.6,2.7,22);
+stringLights(20,15.6,32,15.6,2.7,20);
+stringLights(30.5,9,24,18,2.8,16);
+
+// (removed dark arch boxes that read as grey rectangles behind the bar)
+
+// ---------------------------------------------------------------------------
+// Beach side (east): rolling dunes → flat beach → shoreline → ocean, with depth
+// ---------------------------------------------------------------------------
+(function(){
+  // flat open beach plane (lighter golden sand) between the dunes and the water
+  const beach=new THREE.Mesh(new THREE.PlaneGeometry(500,66), mat(0xe6d49a,{roughness:1}));
+  beach.rotation.x=-Math.PI/2; beach.position.set(LEN/2,0.03,66); beach.receiveShadow=true; scene.add(beach);
+  // wet-sand + foam bands at the shoreline
+  const wet=new THREE.Mesh(new THREE.PlaneGeometry(500,9), mat(0xc9b884,{roughness:1}));
+  wet.rotation.x=-Math.PI/2; wet.position.set(LEN/2,0.04,90); scene.add(wet);
+  const foam=new THREE.Mesh(new THREE.PlaneGeometry(500,4), mat(0xe9efe6,{roughness:1}));
+  foam.rotation.x=-Math.PI/2; foam.position.set(LEN/2,0.05,95.5); scene.add(foam);
+
+  // rolling dunes — a tall foredune just past the patio, then lower ones receding
+  function dune(z,len,h,depth,col){ const d=new THREE.Mesh(new THREE.SphereGeometry(1,20,12), mat(col,{roughness:1}));
+    d.scale.set(len,h,depth); d.position.set(LEN/2,-h*0.55,z); d.receiveShadow=true; scene.add(d); }
+  dune(31, 72, 2.8, 7,  0xdbc795);   // foredune (tallest, nearest)
+  dune(33, 30, 2.2, 5,  0xe0cd9c);   // a higher hummock
+  dune(40, 50, 2.0, 7,  0xddca97);   // secondary hump
+  dune(44, 88, 1.9, 10, 0xe2d09e);   // mid dune
+  dune(52, 60, 1.5, 9,  0xe4d2a0);   // another rise
+  dune(58, 100,1.3, 13, 0xe6d4a3);   // far low dune
+
+  // dune grass — denser, spread across the dunes and out onto the beach
+  const grassMat=mat(0x93a14e,{roughness:1, side:THREE.DoubleSide});
+  const grassMat2=mat(0xa7b25a,{roughness:1, side:THREE.DoubleSide});
+  for(let i=0;i<150;i++){
+    const x=1+Math.random()*(LEN), z=27+Math.random()*30, tuft=new THREE.Group();
+    const gm = Math.random()<0.5?grassMat:grassMat2;
+    for(let b=0;b<4;b++){
+      const blade=new THREE.Mesh(new THREE.ConeGeometry(0.03,0.55+Math.random()*0.5,4),gm);
+      blade.position.set((Math.random()-0.5)*0.22,0.32,(Math.random()-0.5)*0.22);
+      blade.rotation.z=(Math.random()-0.5)*0.6; tuft.add(blade);
+    }
+    tuft.position.set(x,0.4,z); tuft.rotation.y=Math.random()*Math.PI; scene.add(tuft);
+  }
+  // low scrubby beach-grass clumps dotted further out for texture
+  for(let i=0;i<40;i++){
+    const clump=new THREE.Mesh(new THREE.SphereGeometry(0.35+Math.random()*0.3,6,5), mat(0xc7c08a,{roughness:1}));
+    clump.scale.y=0.4; clump.position.set(2+Math.random()*(LEN-2), 0.1, 40+Math.random()*40); scene.add(clump);
+  }
+
+  // a few distant beach umbrellas out on the open beach (depth + scale cues)
+  const beachUmbCols=[0xd6342a,0x2f6fae,0xe6c133,0xd6342a];
+  for(let i=0;i<7;i++){
+    const x=4+Math.random()*(LEN-6), z=52+Math.random()*30;
+    const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,1.8,6), mat(0xcccccc)); pole.position.set(x,0.9,z); scene.add(pole);
+    const can=new THREE.Mesh(new THREE.ConeGeometry(0.9,0.5,10), mat(beachUmbCols[i%beachUmbCols.length])); can.position.set(x,1.85,z); scene.add(can);
+  }
+})();
+
+/* ---------------------------------------------------------------------------
+   Tropical landscaping & props — lush planter foliage, crotons, ferns,
+   banana plants, leaning surfboards and stacked beach chairs
+   --------------------------------------------------------------------------- */
+(function(){
+  const fern   = mat(0x2e7d3a,{roughness:0.95, side:THREE.DoubleSide});
+  const fern2  = mat(0x46a14a,{roughness:0.9,  side:THREE.DoubleSide});
+  const crotonR= mat(0xc23a1f,{roughness:0.85});
+  const crotonO= mat(0xe8862a,{roughness:0.85});
+  const crotonY= mat(0xe6c133,{roughness:0.85});
+  const bananaM= mat(0x2f8a3e,{roughness:0.8, side:THREE.DoubleSide});
+
+  // a dense mixed-foliage clump sitting on a bed of height y
+  function clump(x,z,y,s){
+    s=s||1;
+    for(let i=0;i<3;i++){
+      const b=new THREE.Mesh(new THREE.SphereGeometry(0.3*s,7,6), i%2?fern2:fern);
+      b.scale.set(1.2,0.8,1.2);
+      b.position.set(x+(Math.random()-0.5)*0.5, y+0.28*s, z+(Math.random()-0.5)*0.5);
+      b.castShadow=true; scene.add(b);
+    }
+    for(let i=0;i<5;i++){
+      const blade=new THREE.Mesh(new THREE.ConeGeometry(0.05*s,0.7*s,4), i%2?fern2:fern);
+      blade.position.set(x+(Math.random()-0.5)*0.6, y+0.45*s, z+(Math.random()-0.5)*0.6);
+      blade.rotation.set((Math.random()-0.5)*0.5,0,(Math.random()-0.5)*0.5);
+      scene.add(blade);
+    }
+    const cols=[crotonR,crotonO,crotonY];
+    for(let i=0;i<3;i++){
+      const c=new THREE.Mesh(new THREE.ConeGeometry(0.09*s,0.42*s,5), cols[i%3]);
+      c.position.set(x+(Math.random()-0.5)*0.7, y+0.32*s, z+(Math.random()-0.5)*0.7);
+      c.rotation.z=(Math.random()-0.5)*0.4; c.castShadow=true; scene.add(c);
+    }
+  }
+
+  // tapered banana leaf shape (rounded paddle, not a rectangle)
+  const bananaLeafGeo=(function(){ const L=1.7,W=0.34,s=new THREE.Shape();
+    s.moveTo(0,0);
+    s.quadraticCurveTo(W*0.85,L*0.22,W*0.5,L*0.58);
+    s.quadraticCurveTo(W*0.28,L*0.86,0,L);
+    s.quadraticCurveTo(-W*0.28,L*0.86,-W*0.5,L*0.58);
+    s.quadraticCurveTo(-W*0.85,L*0.22,0,0);
+    return new THREE.ExtrudeGeometry(s,{depth:0.02,bevelEnabled:false}); })();
+  function bananaPlant(x,z,y){
+    const stalk=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.09,1.0,8), mat(0x6a7e3a));
+    stalk.position.set(x,y+0.5,z); stalk.castShadow=true; scene.add(stalk);
+    for(let i=0;i<7;i++){
+      const leaf=new THREE.Mesh(bananaLeafGeo, bananaM);
+      leaf.position.set(x,y+1.0,z);
+      leaf.rotation.order="YXZ"; leaf.rotation.y=(i/7)*Math.PI*2; leaf.rotation.x=-0.7-Math.random()*0.4;
+      leaf.castShadow=true; scene.add(leaf);
+    }
+  }
+
+  // lush plantings on the brick beds (east edge + divider)
+  for(let x=3;x<16;x+=1.6)  clump(x,15.7,0.55,0.9);
+  for(let x=21;x<32;x+=1.6) clump(x,15.7,0.55,0.9);
+  for(let z=3;z<14;z+=1.5)  clump(16,z,0.45,0.85);
+  bananaPlant(4,15.7,0.55); bananaPlant(31,15.7,0.55); bananaPlant(16,13.5,0.45);
+
+  // raised brick bed + lush border along the hotel wall (west)
+  const hb=new THREE.Mesh(new THREE.BoxGeometry(24,0.5,1.0), mat(0x9c5a44,{roughness:0.95}));
+  hb.position.set(14,0.25,1.0); hb.castShadow=true; scene.add(hb);
+  addCollider(2,26,0.4,1.6);
+  for(let x=3;x<26;x+=1.8) clump(x,1.0,0.5,0.95);
+  bananaPlant(8,1.0,0.5); bananaPlant(20,1.0,0.5);
+
+  // colourful croton rings at the base of several palms
+  [[10,16],[19,16.5],[24,15.5],[29,16.8],[14,15.5]].forEach(([px,pz])=>{
+    for(let i=0;i<6;i++){ const a=(i/6)*Math.PI*2, cols=[crotonR,crotonO,crotonY,fern2];
+      const c=new THREE.Mesh(new THREE.ConeGeometry(0.1,0.45,5), cols[i%4]);
+      c.position.set(px+Math.cos(a)*0.5, 0.2, pz+Math.sin(a)*0.5); c.castShadow=true; scene.add(c); }
+  });
+
+  // leaning surfboards used as decor near the tiki (proper rounded board shape)
+  function surfboard(x,z,rotY,color){
+    const b=new THREE.Mesh(SURF_GEO, mat(color,{roughness:0.4}));
+    b.position.set(x,1.05,z); b.rotation.set(0.28,rotY,0); b.castShadow=true; scene.add(b);
+  }
+  surfboard(11.0,21.4,-0.5,0xe6c133); surfboard(11.3,22.2,-0.4,0xc23a1f); surfboard(16.9,22.0,0.5,0x2f8fd8);
+
+  // stacked folding beach chairs piled near the dune
+  function chairStack(x,z,col){
+    const m=mat(col,{roughness:0.7});
+    for(let i=0;i<4;i++){
+      const seat=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.06,0.6),m);
+      seat.position.set(x,0.5+i*0.12,z); seat.rotation.y=i*0.1; seat.castShadow=true; scene.add(seat);
+    }
+    const back=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.7,0.08),m);
+    back.position.set(x,0.95,z-0.28); back.rotation.x=-0.3; scene.add(back);
+    addCollider(x-0.4,x+0.4,z-0.4,z+0.4);
+  }
+  chairStack(33,18,0x2f6fae); chairStack(34,21,0x2f6fae); chairStack(6,24,0x3a7a3a);
+})();
+
+// ---------------------------------------------------------------------------
+// PLAYER + INPUT  (ported directly from the working Eastgate build)
+// ---------------------------------------------------------------------------
+const veil = document.getElementById("veil");
+const playBtn = document.getElementById("playBtn");
+const keys = {};
+let playing=false, locked=false, wasLocked=false, dragging=false;
+
+function tryLock(){ const el=renderer.domElement; if(!el.requestPointerLock) return;
+  try{ const p=el.requestPointerLock(); if(p&&p.catch) p.catch(()=>{}); }catch(e){} }
+function startGame(){ if(playing) return; playing=true;
+  veil.classList.add("hidden"); document.body.classList.add("playing"); tryLock(); }
+function pauseGame(){ playing=false; dragging=false;
+  veil.classList.remove("hidden"); document.body.classList.remove("playing");
+  if(document.pointerLockElement) document.exitPointerLock(); }
+playBtn.addEventListener("click", startGame);
+renderer.domElement.addEventListener("click", ()=>{ if(!playing) startGame(); else if(!locked) tryLock(); });
+
+document.addEventListener("pointerlockchange",()=>{ locked=(document.pointerLockElement===renderer.domElement);
+  if(wasLocked&&!locked&&playing) pauseGame(); wasLocked=locked; });
+document.addEventListener("mousemove",e=>{ if(topView) return; if(locked||(playing&&dragging)){
+  player.yaw-=e.movementX*0.0022; player.pitch-=e.movementY*0.0022;
+  player.pitch=Math.max(-1.45,Math.min(1.45,player.pitch)); }});
+renderer.domElement.addEventListener("mousedown",()=>{ if(playing){ dragging=true; if(!locked) tryLock(); }});
+addEventListener("mouseup",()=>{ dragging=false; });
+renderer.domElement.addEventListener("touchmove",e=>{ if(!playing) return; const t=e.touches[0]; if(!t) return;
+  if(player._tx!=null){ player.yaw-=(t.clientX-player._tx)*0.005; player.pitch-=(t.clientY-player._ty)*0.005;
+    player.pitch=Math.max(-1.45,Math.min(1.45,player.pitch)); }
+  player._tx=t.clientX; player._ty=t.clientY; e.preventDefault(); },{passive:false});
+renderer.domElement.addEventListener("touchend",()=>{ player._tx=null; });
+addEventListener("keydown",e=>{ keys[e.code]=true;
+  if(e.code==="Escape"&&playing&&!locked) pauseGame();
+  if(e.code==="KeyO"&&playing) topView=!topView;
+  if(e.code==="KeyT"&&playing) dayTime+=DAY_DURATION*0.07;   // fast-forward time of day
+  if(e.code==="Tab"||e.code.indexOf("Arrow")===0) e.preventDefault(); });
+addEventListener("keyup",  e=>{ keys[e.code]=false; });
+
+// --- Top-down map view (O) + mouse-wheel zoom -------------------------------
+let topView=false;
+let fpFov=70;        // first-person zoom (vertical FOV in degrees)
+let mapZoom=1.0;     // top-down zoom factor
+const mapCam=new THREE.OrthographicCamera(-1,1,1,-1,0.1,300);
+mapCam.position.set(LEN/2,90,WID/2);
+mapCam.up.set(1,0,0);                 // +X (toward the bar) points up on screen, like the aerials
+mapCam.lookAt(LEN/2,0,WID/2);
+function fitMapCam(){
+  const m=3, aspect=innerWidth/innerHeight;
+  const vHalf=(LEN/2+m)/mapZoom, hHalf=(WID/2+m)/mapZoom;     // screen-vertical=X, screen-horizontal=Z
+  const top=Math.max(vHalf, hHalf/aspect), right=top*aspect;
+  mapCam.top=top; mapCam.bottom=-top; mapCam.right=right; mapCam.left=-right;
+  mapCam.updateProjectionMatrix();
+}
+fitMapCam();
+addEventListener("wheel",e=>{
+  if(!playing) return;
+  if(topView){ mapZoom*=(e.deltaY<0?1.1:0.9); mapZoom=Math.max(0.5,Math.min(3.0,mapZoom)); fitMapCam(); }
+  else { fpFov+=(e.deltaY<0?-4:4); fpFov=Math.max(30,Math.min(90,fpFov)); camera.fov=fpFov; camera.updateProjectionMatrix(); }
+  e.preventDefault();
+},{passive:false});
+
+// ---------------------------------------------------------------------------
+// COLLISION + PHYSICS  (flat ground; same resolver as Eastgate)
+// ---------------------------------------------------------------------------
+const TICK=1/60;
+const BMINX=0.3, BMAXX=31.5, BMINZ=1.5, BMAXZ=26.0;
+function blocked(x,z){ const r=player.radius;
+  for(const c of COL){ if(x>c.minX-r && x<c.maxX+r && z>c.minZ-r && z<c.maxZ+r) return c; }
+  return null; }
+function fixedUpdate(dt){
+  const f=(keys["KeyW"]||keys["ArrowUp"]?1:0)-(keys["KeyS"]||keys["ArrowDown"]?1:0);
+  const s=(keys["KeyD"]||keys["ArrowRight"]?1:0)-(keys["KeyA"]||keys["ArrowLeft"]?1:0);
+  const run=keys["ShiftLeft"]||keys["ShiftRight"], speed=run?6.4:3.4;
+  const sy=Math.sin(player.yaw), cy=Math.cos(player.yaw);
+  let mx=s*cy-f*sy, mz=-f*cy-s*sy; const L=Math.hypot(mx,mz); if(L>0){mx/=L;mz/=L;}
+  const ar=L>0?12:10;
+  player.vel.x+=(mx*speed-player.vel.x)*Math.min(1,ar*dt);
+  player.vel.z+=(mz*speed-player.vel.z)*Math.min(1,ar*dt);
+  const r=player.radius;
+  let nx=player.pos.x+player.vel.x*dt; let c=blocked(nx,player.pos.z);
+  if(c){ nx=player.vel.x>0?c.minX-r:c.maxX+r; player.vel.x=0; } player.pos.x=nx;
+  let nz=player.pos.z+player.vel.z*dt; c=blocked(player.pos.x,nz);
+  if(c){ nz=player.vel.z>0?c.minZ-r:c.maxZ+r; player.vel.z=0; } player.pos.z=nz;
+  player.pos.x=Math.max(BMINX,Math.min(BMAXX,player.pos.x));
+  player.pos.z=Math.max(BMINZ,Math.min(BMAXZ,player.pos.z));
+  const hs=Math.hypot(player.vel.x,player.vel.z); player.step+=hs*dt*1.9;
+  player.bob=Math.sin(player.step*2)*0.035*Math.min(1,hs/3);
+}
+
+// ---------------------------------------------------------------------------
+// RENDER LOOP  (fixed-timestep accumulator + camera.lookAt — as in Eastgate)
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// DAY / NIGHT ENGINE  (master clock → sun arc → phase blending → reactive lights)
+// ---------------------------------------------------------------------------
+const DAY_DURATION = 1200;                // seconds per full 24h cycle (slow, gentle shadow sweep)
+let dayTime = DAY_DURATION * 0.20;        // start mid-morning
+function mix(a,b,t){ return new THREE.Color(a).lerp(new THREE.Color(b), t); }
+const _tmp = new THREE.Vector3();
+function updateDayNight(dt, camp){
+  dayTime = (dayTime + dt) % DAY_DURATION;
+  const t = dayTime / DAY_DURATION;
+  const ang = t * Math.PI*2;
+  const sh = Math.sin(ang);               // sunHeight, -1..1
+  const horiz = Math.cos(ang);
+  const cxc=LEN/2, czc=WID/2;
+
+  // directional light = sun by day, moon by night (always lit from above)
+  const isDay = sh>=0, lift = isDay? sh : -sh*0.5;
+  sun.position.set(cxc + (isDay?-horiz:horiz)*70, Math.max(lift*62, 6), czc + 35);
+  sun.target.position.set(cxc,0,czc); sun.target.updateMatrixWorld();
+  sun.castShadow = lift>0.08;
+
+  // sun & moon discs on the sky sphere, relative to the camera (infinite feel)
+  const sd=_tmp.set(-horiz, Math.max(sh,-0.2), 0.55).normalize();
+  sunMesh.position.copy(camp).addScaledVector(sd, 300); sunGlow.position.copy(sunMesh.position);
+  const mdx=horiz, mdy=Math.max(-sh,-0.2);
+  moonMesh.position.set(camp.x+mdx*300*0.7, camp.y+mdy*300, camp.z+0.55*300*0.7);
+  sunMesh.visible = sh > -0.12; moonMesh.visible = sh < 0.12;
+
+  // phase blending via sunHeight thresholds
+  const NIGHT_SKY=0x00020a, NIGHT_FOG=0x000105, NIGHT_CLOUD=0x0c1124;
+  let sky, fog, sunc, sunInt, hemiInt, ambInt, night, cloudc;
+  if(sh > 0.22){ sky=mix(0xffffff,0xffffff,0); fog=mix(0xd9e7ee,0xd9e7ee,0); sunc=mix(0xfff3df,0xfff3df,0);
+                 sunInt=0.78; hemiInt=0.55; ambInt=0.12; night=0; cloudc=mix(0xffffff,0xffffff,0); }
+  else if(sh > 0.0){ const k=sh/0.22;                    // 1=day .. 0=sunset
+    sky=mix(0xff9a5a,0xffffff,k); fog=mix(0xe7a878,0xd9e7ee,k); sunc=mix(0xff9d5a,0xfff3df,k);
+    sunInt=0.40+0.38*k; hemiInt=0.28+0.27*k; ambInt=0.10+0.02*k; night=0;
+    cloudc=mix(0xffb784,0xffffff,k); }                   // warm sunset underbellies
+  else if(sh > -0.18){ const k=(sh+0.18)/0.18;            // 1=sunset .. 0=night
+    sky=mix(NIGHT_SKY,0xff9a5a,k); fog=mix(NIGHT_FOG,0xe7a878,k); sunc=mix(0x6a7fb4,0xff9d5a,k);
+    sunInt=0.035+0.365*k; hemiInt=0.024+0.256*k; ambInt=0.016+0.084*k; night=1-k;
+    cloudc=mix(NIGHT_CLOUD,0xff9a5a,k); }                 // dusk: dark blue → orange
+  else { sky=mix(NIGHT_SKY,NIGHT_SKY,0); fog=mix(NIGHT_FOG,NIGHT_FOG,0); sunc=mix(0x6a7fb4,0x6a7fb4,0);
+         sunInt=0.035; hemiInt=0.024; ambInt=0.016; night=1; cloudc=mix(NIGHT_CLOUD,NIGHT_CLOUD,0); }
+
+  skyDomeMat.color.copy(sky);
+  scene.fog.color.copy(fog);
+  if(scene.background) scene.background.copy(fog);
+  sun.color.copy(sunc); sun.intensity=sunInt;
+  hemi.intensity=hemiInt; amb.intensity=ambInt;
+
+  // beach atmosphere: sun glow + water glint, strongest low over the horizon
+  const up=Math.max(0,sh);
+  sunGlow.material.opacity = 0.22*up + (sh>0 && sh<0.28 ? 0.4*(1-sh/0.28) : 0);
+  waterGlint.material.opacity = 0.4*up;
+  waterGlint.material.color.copy(mix(0xffffff,0xffd9a0, sh<0.25?1:0));
+
+  // reactive night fixtures (smoothly tied to the night factor)
+  const flick = 1 + 0.04*Math.sin(performance.now()*0.018);
+  const lampsOn = night>0.02;
+  for(const L of LAMP_LIGHTS){ L.visible=lampsOn; L.intensity = 0.9*night*flick; }
+  for(const m of LAMP_GLASS)  m.color.copy(mix(0x6a6048,0xffe6a8, night));
+  for(const m of LAMP_HALOS)  m.opacity = 0.55*night;
+  for(const m of STRING_MATS) m.color.copy(mix(0x6b6149,0xffe39a, night));
+  for(const m of BAR_BULBS)   m.color.copy(mix(0x6a5640,0xffe0a0, night));
+  for(const L of BAR_LIGHTS){  L.visible=lampsOn; L.intensity = 0.8*night; }
+  for(const m of LITWIN)      m.emissiveIntensity = 0.95*night;
+  for(const m of CLOUD_MATS)  m.color.copy(cloudc);
+  const nowms=performance.now();
+  for(const c of CANDLES){ const op=Math.max(0,Math.min(1,night*1.1));
+    c.flame.material.opacity = op*(0.85+0.15*Math.sin(nowms*0.012+c.flame.userData.ph));
+    c.flame.scale.y = 1+Math.sin(nowms*0.013+c.flame.userData.ph)*0.25;
+    c.glow.material.opacity = op*0.8; }
+}
+
+let acc=0, last=performance.now()/1000;
+function frame(){ requestAnimationFrame(frame);
+  const now=performance.now()/1000; let dt=now-last; last=now; if(dt>0.1)dt=0.1; acc+=dt;
+  while(acc>=TICK){ if(playing && !topView) fixedUpdate(TICK); acc-=TICK; }
+
+  const t=performance.now()*0.001;
+  for(const fl of FLAMES){ fl.scale.y=1+Math.sin(t*12+fl.userData.ph)*0.22;
+    fl.scale.x=fl.scale.z=1+Math.cos(t*9+fl.userData.ph)*0.1; }
+  for(const fan of FANS){ fan.rotation.y += dt*2.4; }
+  for(const cl of CLOUDS){ cl.position.x+=cl.userData.spd*dt; if(cl.position.x>150) cl.position.x=-80; }
+  for(const p of PALMS){ p.rotation.z = Math.sin(t*0.7 + p.userData.swayPh)*p.userData.swayAmt; }
+  for(const gl of GULLS){ const u=gl.userData;
+    u.ang += dt*u.spd;
+    gl.position.set(u.cx+Math.cos(u.ang)*u.r, u.y+Math.sin(t*0.4+u.ph)*1.6, u.cz+Math.sin(u.ang)*u.r);
+    gl.rotation.y = -u.ang + (u.spd>0?-Math.PI/2:Math.PI/2);
+    const flap=Math.sin(t*u.flap+u.ph)*0.6+0.12;
+    for(const w of u.wings){ w.pivot.rotation.z = w.side*flap; }
+  }
+  updateDayNight(dt, topView ? mapCam.position : camera.position);
+
+  if(topView){
+    renderer.render(scene,mapCam);
+  } else {
+    camera.position.set(player.pos.x, player.feetY+player.eye+player.bob, player.pos.z);
+    const cp=Math.cos(player.pitch), sp=Math.sin(player.pitch);
+    camera.lookAt(camera.position.x-Math.sin(player.yaw)*cp,
+                  camera.position.y+sp,
+                  camera.position.z-Math.cos(player.yaw)*cp);
+    renderer.render(scene,camera);
+  }
+}
+addEventListener("resize",()=>{ camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); fitMapCam(); });
+
+// kick off
+document.getElementById("loading").style.display="none";
+veil.classList.remove("hidden");
+frame();
+})();
+</script>
+</body>
+</html>
