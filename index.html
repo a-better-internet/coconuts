@@ -428,18 +428,51 @@ function hipRoof(w,d,h,m){
   r.castShadow = true; r.receiveShadow = true;
   return r;
 }
-// shared helper: load a linked image onto a plane, sized by aspect (width-anchored)
+// shared helper: load a linked image onto a plane, sized by aspect (width-anchored).
+// basic=true → self-lit (neon/illuminated). basic=false → shaded by scene lights
+// (opaque alpha-cutout so it never alpha-sorts/glitches; hidden until the image loads).
 function linkSign(parent, url, w, x, y, z, rotY, basic){
-  const M = basic ? new THREE.MeshBasicMaterial({transparent:true,alphaTest:0.05,opacity:0,side:THREE.DoubleSide,toneMapped:false})
-                  : new THREE.MeshStandardMaterial({transparent:true,alphaTest:0.05,opacity:0,roughness:0.85});
-  const p=new THREE.Mesh(new THREE.PlaneGeometry(1,1), M); p.position.set(x,y,z); p.rotation.y=rotY; p.renderOrder=4; parent.add(p);
+  let M;
+  if(basic){ M=new THREE.MeshBasicMaterial({transparent:true,alphaTest:0.05,opacity:0,side:THREE.DoubleSide,toneMapped:false}); }
+  else { M=new THREE.MeshStandardMaterial({alphaTest:0.5, side:THREE.DoubleSide, roughness:0.7}); }
+  const p=new THREE.Mesh(new THREE.PlaneGeometry(1,1), M); p.position.set(x,y,z); p.rotation.y=rotY; p.renderOrder=basic?4:0;
+  if(!basic) p.visible=false; parent.add(p);
   const proxy="https://images.weserv.nl/?url="+url.replace(/^https?:\/\//,"")+"&output=png";
   const ldr=new THREE.TextureLoader(); ldr.setCrossOrigin("anonymous");
   function apply(tex){ try{tex.colorSpace=THREE.SRGBColorSpace;}catch(e){}
     const a=(tex.image&&tex.image.width)?tex.image.width/tex.image.height:1.5;
-    p.scale.set(w, w/a, 1); M.map=tex; M.opacity=1; M.needsUpdate=true; }
+    p.scale.set(w, w/a, 1); M.map=tex; if(basic){ M.opacity=1; } else { p.visible=true; } M.needsUpdate=true; }
   ldr.load(url, apply, undefined, ()=>ldr.load(proxy, apply, undefined, ()=>{}));
   return p;
+}
+// wall-mounted TV: dark bezel + two crossfading screen planes that cycle hosted images
+const TVS=[];
+function buildTV(parent, x, y, z, W){
+  const H=W*683/1024;               // 1024x683 aspect
+  const bezel=box(0.16, H+0.16, W+0.16, mat(0x121214,{roughness:0.45,metalness:0.35}));
+  bezel.position.set(x, y, z); bezel.castShadow=true; parent.add(bezel);
+  // little under-bezel power LED
+  const led=new THREE.Mesh(new THREE.SphereGeometry(0.012,6,6), new THREE.MeshBasicMaterial({color:0x33ff66}));
+  led.position.set(x-0.085, y-H/2-0.04, z+W/2-0.08); parent.add(led);
+  function screen(off, ro){
+    const m=new THREE.MeshBasicMaterial({color:0x0a0a0a, transparent:true, opacity:0, toneMapped:false, side:THREE.DoubleSide, depthWrite:false});
+    const p=new THREE.Mesh(new THREE.PlaneGeometry(W,H), m); p.position.set(x-0.082-off, y, z); p.rotation.y=-Math.PI/2; p.renderOrder=ro; parent.add(p); return p;
+  }
+  const A=screen(0,5), B=screen(0.004,6);  // B sits slightly proud to avoid coplanar z-fight
+  A.material.color.set(0xffffff); B.material.color.set(0xffffff);
+  // faint scanline overlay for CRT feel
+  const sc=cvs(4,128), sx=sc.getContext("2d");
+  for(let i=0;i<128;i++){ sx.fillStyle = (i%2===0)?"rgba(0,0,0,0.5)":"rgba(0,0,0,0)"; sx.fillRect(0,i,4,1); }
+  const scTex=new THREE.CanvasTexture(sc); scTex.wrapT=THREE.RepeatWrapping; scTex.repeat.set(1,Math.round(H*40));
+  const scan=new THREE.Mesh(new THREE.PlaneGeometry(W,H), new THREE.MeshBasicMaterial({map:scTex,transparent:true,opacity:0.10,depthWrite:false,toneMapped:false,side:THREE.DoubleSide}));
+  scan.position.set(x-0.09, y, z); scan.rotation.y=-Math.PI/2; scan.renderOrder=7; parent.add(scan);
+  const tex=[]; const ldr=new THREE.TextureLoader(); ldr.setCrossOrigin("anonymous");
+  for(let i=1;i<=6;i++){ const u="https://thelossless.neocities.org/Coconuts/TV"+i+".png";
+    const proxy="https://images.weserv.nl/?url=thelossless.neocities.org/Coconuts/TV"+i+".png&output=png"; const idx=i-1;
+    const ok=t=>{ try{t.colorSpace=THREE.SRGBColorSpace;}catch(e){} tex[idx]=t; };
+    ldr.load(u, ok, undefined, ()=>ldr.load(proxy, ok, undefined, ()=>{}));
+  }
+  TVS.push({A,B,cur:0,next:1,fade:0,timer:0,trans:false,tex});
 }
 function buildBar(){
   const g = new THREE.Group();
@@ -555,12 +588,14 @@ function buildBar(){
       const pl=new THREE.PointLight(0xfff0d0, 0.0, 7, 2); pl.position.set(31.7,sy+0.8,z); g.add(pl); BAR_LIGHTS.push(pl); }
     const wash=new THREE.PointLight(0xffe9c4, 0.35, 8, 2); wash.position.set(31.2,sy,ZC); g.add(wash);
   })();
-  // scattered beer / seltzer signs on the back wall (self-lit, like neon)
+  // beer / seltzer signs clustered at the RIGHT end of the back wall (self-lit, like neon)
   const RX=32.5, RY=-Math.PI/2, host="https://thelossless.neocities.org/Coconuts/";
-  linkSign(g, host+"Coors.png",     0.95, RX, 3.5, 5.6,  RY, true);
-  linkSign(g, host+"Yuengling.png", 0.95, RX, 2.85, 6.7, RY, true);
-  linkSign(g, host+"landshark.png", 0.95, RX, 3.5, 14.4, RY, true);
-  linkSign(g, host+"WhiteClaw.png", 0.9,  RX, 2.85, 13.4, RY, true);
+  linkSign(g, host+"Coors.png",     0.9, RX, 3.5,  12.9, RY, true);
+  linkSign(g, host+"Yuengling.png", 0.9, RX, 2.78, 12.9, RY, true);
+  linkSign(g, host+"landshark.png", 0.9, RX, 3.5,  14.5, RY, true);
+  linkSign(g, host+"WhiteClaw.png", 0.85,RX, 2.78, 14.5, RY, true);
+  // --- wall-mounted TV cycling through hosted images, left end of the back wall ---
+  buildTV(g, 32.52, 3.35, 6.2, 1.75);
   // stools in front of the main counter
   for(let z=Z0+1; z<Z1-0.5; z+=1.6){ const seat=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,0.08,12), mat(0x2b2b2b));
     seat.position.set(29.5,1.0,z); g.add(seat);
@@ -660,7 +695,7 @@ const CUP_DECALS=[];
   const ldr=new THREE.TextureLoader(); ldr.setCrossOrigin("anonymous");
   function apply(tex){ try{tex.colorSpace=THREE.SRGBColorSpace;}catch(e){}
     const a=(tex.image&&tex.image.width)?tex.image.width/tex.image.height:0.7;
-    CUP_DECALS.forEach(d=>{ const w=d.userData.w; d.scale.set(w, w/a, 1); d.material.map=tex; d.material.opacity=1; d.material.needsUpdate=true; }); }
+    CUP_DECALS.forEach(d=>{ const w=d.userData.w; d.scale.set(w, w/a, 1); d.material.map=tex; d.visible=true; d.material.needsUpdate=true; }); }
   ldr.load(url, apply, undefined, ()=>ldr.load(proxy, apply, undefined, ()=>{}));
 })();
 function makeCup(){
@@ -669,9 +704,9 @@ function makeCup(){
   cup.position.y=0.065; c.add(cup);
   const drink=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.032,0.1,12), mat(0xe8703a,{transparent:true,opacity:0.85})); drink.position.y=0.055; c.add(drink);
   for(const sgn of [1,-1]){   // logo on front & back of the cup
-    const m=new THREE.MeshBasicMaterial({transparent:true,alphaTest:0.04,opacity:0,side:THREE.DoubleSide,depthWrite:false});
+    const m=new THREE.MeshStandardMaterial({alphaTest:0.4,side:THREE.DoubleSide,roughness:0.5});
     const dec=new THREE.Mesh(new THREE.PlaneGeometry(1,1), m); dec.userData.w=0.072; dec.scale.set(0.072,0.1,1);
-    dec.position.set(0,0.072,sgn*0.047); dec.rotation.y=sgn>0?0:Math.PI; dec.renderOrder=5; c.add(dec); CUP_DECALS.push(dec);
+    dec.position.set(0,0.072,sgn*0.047); dec.rotation.y=sgn>0?0:Math.PI; dec.visible=false; c.add(dec); CUP_DECALS.push(dec);
   }
   return c;
 }
@@ -803,8 +838,8 @@ function buildTiki(cx,cz,W,D){
   (function(){
     const planes=[];
     function decal(w,x,y,z,rotY){
-      const m=new THREE.MeshBasicMaterial({transparent:true,alphaTest:0.3,opacity:0,depthWrite:false,side:THREE.DoubleSide});
-      const p=new THREE.Mesh(new THREE.PlaneGeometry(1,1),m); p.position.set(x,y,z); p.rotation.y=rotY; p.renderOrder=4; g.add(p); planes.push({p,w});
+      const m=new THREE.MeshStandardMaterial({alphaTest:0.4,side:THREE.DoubleSide,roughness:0.7});
+      const p=new THREE.Mesh(new THREE.PlaneGeometry(1,1),m); p.position.set(x,y,z); p.rotation.y=rotY; p.visible=false; g.add(p); planes.push({p,w});
     }
     const fy=0.6;
     decal(1.8, 0, fy, hd-0.5+0.281, 0);                  // back face (+Z, beach side)
@@ -815,7 +850,7 @@ function buildTiki(cx,cz,W,D){
     const ldr=new THREE.TextureLoader(); ldr.setCrossOrigin("anonymous");
     function apply(tex){ try{ tex.colorSpace=THREE.SRGBColorSpace; }catch(e){}
       const a=(tex.image&&tex.image.width)?tex.image.width/tex.image.height:2.2;
-      planes.forEach(o=>{ o.p.scale.set(o.w,o.w/a,1); o.p.material.map=tex; o.p.material.opacity=1; o.p.material.needsUpdate=true; }); }
+      planes.forEach(o=>{ o.p.scale.set(o.w,o.w/a,1); o.p.material.map=tex; o.p.visible=true; o.p.material.needsUpdate=true; }); }
     ldr.load(url, apply, undefined, ()=>ldr.load(proxy, apply, undefined, ()=>{}));
   })();
   g.position.set(cx,0,cz);
@@ -872,14 +907,14 @@ function buildStage(cx,cz,rotY){
   for(const sx of [-hw+0.5,hw-0.5]){ const sp=box(0.42,0.7,0.4,mat(0x18181b,{roughness:0.6})); sp.position.set(sx,deckH+0.35,-hd+0.55); sp.castShadow=true; g.add(sp); }
   // Coconuts Entertainment logo centered on the FRONT gable (faces the crowd)
   (function(){
-    const m=new THREE.MeshBasicMaterial({transparent:true,alphaTest:0.04,opacity:0,side:THREE.DoubleSide,depthWrite:false});
-    const p=new THREE.Mesh(new THREE.PlaneGeometry(1,1),m); p.position.set(0, eaveY+0.5, -hd-0.42); p.rotation.y=Math.PI; p.renderOrder=4; g.add(p);
+    const m=new THREE.MeshStandardMaterial({alphaTest:0.4,side:THREE.DoubleSide,roughness:0.7});
+    const p=new THREE.Mesh(new THREE.PlaneGeometry(1,1),m); p.position.set(0, eaveY+0.5, -hd-0.42); p.rotation.y=Math.PI; p.visible=false; g.add(p);
     const url="https://thelossless.neocities.org/Coconuts/ChatGPT%20Image%20Jun%2017,%202026,%2011_00_17%20PM.png";
     const proxy="https://images.weserv.nl/?url=thelossless.neocities.org%2FCoconuts%2FChatGPT%2520Image%2520Jun%252017%252C%25202026%252C%252011_00_17%2520PM.png&output=png";
     const ldr=new THREE.TextureLoader(); ldr.setCrossOrigin("anonymous");
     function apply(tex){ try{tex.colorSpace=THREE.SRGBColorSpace;}catch(e){}
       const a=(tex.image&&tex.image.width)?tex.image.width/tex.image.height:2.3;
-      const W2=2.0, H2=W2/a; p.scale.set(W2,H2,1); m.map=tex; m.opacity=1; m.needsUpdate=true; }
+      const W2=2.0, H2=W2/a; p.scale.set(W2,H2,1); m.map=tex; p.visible=true; m.needsUpdate=true; }
     ldr.load(url, apply, undefined, ()=>ldr.load(proxy, apply, undefined, ()=>{}));
   })();
   g.position.set(cx,0,cz); g.rotation.y=rotY||0; scene.add(g);
@@ -1601,6 +1636,18 @@ function frame(){ requestAnimationFrame(frame);
   for(const fl of FLAMES){ fl.scale.y=1+Math.sin(t*12+fl.userData.ph)*0.22;
     fl.scale.x=fl.scale.z=1+Math.cos(t*9+fl.userData.ph)*0.1; }
   for(const fan of FANS){ fan.rotation.y += dt*2.4; }
+  for(const tv of TVS){
+    if(!tv.tex[tv.cur]){ continue; }                 // wait for first frame to load
+    if(!tv.A.material.map){ tv.A.material.map=tv.tex[tv.cur]; tv.A.material.opacity=1; tv.A.material.needsUpdate=true; }
+    tv.timer += dt;
+    if(!tv.trans && tv.timer > 4.6 && tv.tex[tv.next]){ tv.B.material.map=tv.tex[tv.next]; tv.B.material.needsUpdate=true; tv.trans=true; tv.fade=0; }
+    if(tv.trans){ tv.fade += dt/0.55;
+      if(tv.fade>=1){ tv.A.material.map=tv.tex[tv.next]; tv.A.material.opacity=1; tv.A.material.needsUpdate=true; tv.B.material.opacity=0;
+        tv.cur=tv.next; tv.next=(tv.next+1)%6; tv.trans=false; tv.timer=0; }
+      else { const f=tv.fade; tv.A.material.opacity=(1-f); tv.B.material.opacity=f;
+        const pop=1+Math.sin(f*Math.PI)*0.25; tv.A.material.color.setScalar(pop); tv.B.material.color.setScalar(pop); }   // brief brightness bloom mid-switch
+    } else { tv.A.material.color.setScalar(1); }
+  }
   { const pspd=Math.hypot(player.vel.x,player.vel.z);
     for(const b of BALLS){ const u=b.userData, r=u.radius;
       // kick when the player walks into a ball
