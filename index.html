@@ -491,6 +491,26 @@ function frondTex(){ const c=cvs(64,128),x=c.getContext("2d");
     x.fillRect(Math.random()*64, Math.random()*128, 5, 1.6); }      // dry flecks
   const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
 const TEX_LEAF = leafMassTex(), TEX_LEAFBUMP = leafMassBump();
+// Leafy material: the shared grey leaf-mass map tinted by `hex`, so a whole
+// garden of different-coloured plants still costs a handful of textures.
+// Materials are cheap; textures are not — r128 uploads every Texture object
+// separately even when they share one canvas, so the tile scale is quantised
+// and the resulting texture pair is cached and shared.
+const _LEAFTEX={};
+function leafTexPair(rep){
+  const k=(Math.round(Math.max(0.5,rep)*2)/2).toFixed(1);
+  let e=_LEAFTEX[k];
+  if(!e){ const m=TEX_LEAF.clone(), b=TEX_LEAFBUMP.clone();
+    m.repeat.set(+k,+k); b.repeat.set(+k,+k); m.needsUpdate=b.needsUpdate=true;
+    e=_LEAFTEX[k]={m:m,b:b}; }
+  return e;
+}
+function leafMat(hex, rep, bump){
+  const e=leafTexPair(rep);
+  return new THREE.MeshStandardMaterial({color:hex, map:e.m, bumpMap:e.b,
+    bumpScale:(bump===undefined?0.45:bump), roughness:0.95});
+}
+
 const TEX_CROTON = crotonLeafTex(), TEX_FROND = frondTex();
 const TEX_PALMBARK = palmBarkTex(), TEX_PALMBUMP = palmBarkBump();
 const TEX_MESHTOP  = meshTopTex(),  TEX_MESHBUMP = meshTopBump();
@@ -723,12 +743,31 @@ const SKYLINE_MATS=[];
     }
   }
 
-  // asphalt service street the row backs onto, plus driveways between buildings
+  // Asphalt: a service street the row backs onto, and the parking apron each
+  // block fronts. Without it the buildings stand on bare ground and the view
+  // out of the entrance reads as an endless brick plaza.
   const asphalt=mat(0x6f7377,{roughness:1});
+  const stripeM=mat(0xd6d6cc,{roughness:1});
   for(const sx of [-1,1]){
     const road=new THREE.Mesh(new THREE.PlaneGeometry(320,11), asphalt);
-    road.rotation.x=-Math.PI/2; road.position.set(sx*195, 0.01, -24); scene.add(road);
+    road.rotation.x=-Math.PI/2; road.position.set(sx*195, 0.012, -24); scene.add(road);
   }
+  // apron between the patio and the near row (sits above the brick, which is
+  // laid at y=0.016, so it replaces it rather than fighting it)
+  (function(){
+    const apron=new THREE.Mesh(new THREE.PlaneGeometry(46,46), asphalt);
+    apron.rotation.x=-Math.PI/2; apron.position.set(-40, 0.021, 8); scene.add(apron);
+    for(let z=-12; z<=28; z+=2.8){          // painted stalls facing the buildings
+      const st=new THREE.Mesh(new THREE.PlaneGeometry(4.6,0.13), stripeM);
+      st.rotation.x=-Math.PI/2; st.position.set(-55, 0.023, z); scene.add(st);
+    }
+    for(let z=-12; z<=28; z+=2.8){
+      const st=new THREE.Mesh(new THREE.PlaneGeometry(4.6,0.13), stripeM);
+      st.rotation.x=-Math.PI/2; st.position.set(-25, 0.023, z); scene.add(st);
+    }
+    const kerb=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.16,46), mat(0xbdbab2,{roughness:1}));
+    kerb.position.set(-17.5,0.08,8); scene.add(kerb);
+  })();
 
   // Low-rise motels near in, condo towers stacked behind them and further off.
   // x runs along the shore; the ocean end of each building sits near z≈24.
@@ -747,6 +786,20 @@ const SKYLINE_MATS=[];
     [ 262,-32, 23, 29, 15, 4, false]
   ];
   for(const r of rows) building(r[0], r[1], r[2], r[3], r[4], r[5], {redRoof:r[6]});
+  // clipped hedges along the base of the near row, as on every block down here
+  const hedgeA=leafMat(0x397038, 1.6, 0.5), hedgeB=leafMat(0x2f6130, 1.9, 0.5);
+  for(let i=0;i<10;i++){
+    const bx=rows[i][0], bz=rows[i][1], bw=rows[i][2], bd=rows[i][3];
+    for(let z=bz-bd/2+1; z<bz+bd/2; z+=1.5){
+      for(const sx of [-1,1]){
+        const h=new THREE.Mesh(new THREE.SphereGeometry(0.85+Math.random()*0.25,7,6),
+                               Math.random()<0.5?hedgeA:hedgeB);
+        h.scale.set(1.05,0.78,1.05);
+        h.position.set(bx+sx*(bw/2+1.1)+(Math.random()-0.5)*0.3, 0.62, z+(Math.random()-0.5)*0.3);
+        scene.add(h);
+      }
+    }
+  }
 })();
 
 // ---------------------------------------------------------------------------
@@ -2040,25 +2093,6 @@ const SHRUB_HUES=[
   [0x6e2b32,0.09],[0x8a3a3f,0.07],                   // burgundy coleus
   [0x9c4a6e,0.05],[0xa8582c,0.05]                    // magenta & rust croton
 ];
-// Leafy material: the shared grey leaf-mass map tinted by `hex`, so a whole
-// garden of different-coloured plants still costs a handful of textures.
-// Materials are cheap; textures are not — r128 uploads every Texture object
-// separately even when they share one canvas, so the tile scale is quantised
-// and the resulting texture pair is cached and shared.
-const _LEAFTEX={};
-function leafTexPair(rep){
-  const k=(Math.round(Math.max(0.5,rep)*2)/2).toFixed(1);
-  let e=_LEAFTEX[k];
-  if(!e){ const m=TEX_LEAF.clone(), b=TEX_LEAFBUMP.clone();
-    m.repeat.set(+k,+k); b.repeat.set(+k,+k); m.needsUpdate=b.needsUpdate=true;
-    e=_LEAFTEX[k]={m:m,b:b}; }
-  return e;
-}
-function leafMat(hex, rep, bump){
-  const e=leafTexPair(rep);
-  return new THREE.MeshStandardMaterial({color:hex, map:e.m, bumpMap:e.b,
-    bumpScale:(bump===undefined?0.45:bump), roughness:0.95});
-}
 function pickShrubHue(){
   let r=Math.random()*SHRUB_HUES.reduce((a,h)=>a+h[1],0);
   for(const h of SHRUB_HUES){ r-=h[1]; if(r<=0) return h[0]; }
@@ -2403,7 +2437,7 @@ let moonAgeDays = 8.4;      // where the moon starts in its 29.5-day cycle
         }`,
       fog:false, depthWrite:true
     });
-    moonMesh=new THREE.Mesh(new THREE.SphereGeometry(5.2,48,32), moonMat);
+    moonMesh=new THREE.Mesh(new THREE.SphereGeometry(7.4,48,32), moonMat);
     scene.add(moonMesh);
     // hazy halo around the disc — thickens with humidity, reddens near the horizon
     moonHalo=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xdfe6ff,
@@ -3512,7 +3546,7 @@ function updateDayNight(dt, camp){
       const full = 0.5 - 0.5*Math.cos(ph);                    // 1 at full moon
       moonHalo.material.opacity = 0.30*full*(0.35+0.65*alt)*(1-0.85*rainIntensity)*night;
       moonHalo.material.color.copy(mix(0xffc89a, 0xd8e4ff, alt));
-      const hs = 34 + 26*full; moonHalo.scale.set(hs,hs,1);
+      const hs = 46 + 34*full; moonHalo.scale.set(hs,hs,1);
     }
   }
 
