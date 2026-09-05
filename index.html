@@ -63,10 +63,36 @@
   .foot{margin-top:14px;font-size:11px;color:#9fc0c7;}
   #loading{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;
     background:#0b1a22;color:#cfe6ea;font-size:13px;letter-spacing:1px;}
+
+  /* Screen grade: soft lens vignette + a warm wash toward the sun.
+     --vig / --warm are driven from the day/night cycle so evenings sink at the
+     corners and midday keeps a little haze bloom in the middle of the frame. */
+  #grade{
+    position:fixed;inset:0;z-index:3;pointer-events:none;opacity:0;transition:opacity .8s;
+    background:
+      radial-gradient(78% 62% at 50% 34%, rgba(255,238,203,calc(.075 * var(--warm,1))), rgba(255,238,203,0) 72%),
+      radial-gradient(125% 98% at 50% 44%, rgba(0,0,0,0) 40%, rgba(7,16,25,calc(.34 * var(--vig,1))) 100%);
+  }
+  body.playing #grade{opacity:1;}
+  /* Fine film grain — barely there, but it stops large flat skies from banding. */
+  #grain{
+    position:fixed;inset:-140px;z-index:4;pointer-events:none;opacity:.05;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/></filter><rect width='160' height='160' filter='url(%23n)' opacity='0.55'/></svg>");
+    animation:grainShift 1.05s steps(5) infinite;
+  }
+  body.playing #grain{opacity:.05;}
+  body:not(.playing) #grain{opacity:0;}
+  @keyframes grainShift{
+    0%{transform:translate(0,0)}      20%{transform:translate(-22px,14px)}
+    40%{transform:translate(16px,-19px)} 60%{transform:translate(-14px,-11px)}
+    80%{transform:translate(19px,17px)}  100%{transform:translate(0,0)}
+  }
 </style>
 </head>
 <body>
 <div id="app"></div>
+<div id="grade"></div>
+<div id="grain"></div>
 <div id="cross"></div>
 <div id="hud">
   <div><b>WASD</b> — move &nbsp;·&nbsp; <b>Mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — jog &nbsp;·&nbsp; <b>E</b> — sit &nbsp;·&nbsp; <b>K</b> — drink &nbsp;·&nbsp; <b>B</b> — throw ball &nbsp;·&nbsp; <b>H</b> — foam gun &nbsp;·&nbsp; <b>N</b> — drone &nbsp;·&nbsp; <b>T</b> — time &nbsp;·&nbsp; <b>O</b> — map &nbsp;·&nbsp; <b>3</b> — overhead &nbsp;·&nbsp; <b>M</b> — sound</div>
@@ -169,6 +195,12 @@ renderer.outputEncoding = THREE.sRGBEncoding;
 document.getElementById("app").appendChild(renderer.domElement);
 renderer.domElement.tabIndex = 0;
 renderer.domElement.style.outline = "none";
+// A light contrast/saturation lift. The renderer deliberately runs a low, flat
+// exposure so nothing blows out; this puts the bite back at the very end of the
+// chain instead of by pushing lights around. BASE_GRADE composes with the
+// intoxication blur so neither clobbers the other.
+const BASE_GRADE = "saturate(1.09) contrast(1.055) brightness(0.995)";
+renderer.domElement.style.filter = BASE_GRADE;
 
 // ---------------------------------------------------------------------------
 // Lighting — soft, even, SATURATED daylight (low total exposure, no blowout)
@@ -201,6 +233,12 @@ function addCollider(minX,maxX,minZ,maxZ){ COL.push({minX,maxX,minZ,maxZ}); }
 // surfaces foam can pile on top of (tables, chairs, stools, counters = flat; umbrellas = dome)
 const FOAMSURF=[];
 function addFoamFlat(x0,x1,z0,z1,top){ FOAMSURF.push({dome:false,x0,x1,z0,z1,top}); }
+// Soft ambient-occlusion patches on the ground. The sun shadow map only covers
+// the middle of the patio and switches off entirely at night and under rain, so
+// without these, umbrellas, posts and palms float. Every patch is merged into a
+// single mesh once the world is built, so the whole set costs one draw call.
+const AO_SPOTS=[];
+function addAO(x,z,r,level){ AO_SPOTS.push({x:x, z:z, r:r, l:(level===undefined?2:level)}); }
 function addFoamDome(cx,cz,R,rimY,apexY){ FOAMSURF.push({dome:true,cx,cz,R,r2:R*R,rimY,apexY}); }
 
 function mat(color, opts){ return new THREE.MeshStandardMaterial(Object.assign({color:color, roughness:0.92, metalness:0.0}, opts||{})); }
@@ -272,14 +310,120 @@ function diamondTex(){ const c=cvs(128,128),x=c.getContext("2d");
   x.strokeStyle="rgba(255,255,255,0.5)"; x.lineWidth=0.7;
   for(let i=-160;i<300;i+=step){ x.beginPath(); x.moveTo(i+1,1); x.lineTo(i+129,129); x.stroke(); }
   const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
-// pierced breeze-block pattern for the hotel balcony railings
+// Hotel balcony railings are pierced concrete screen block — the holes go all
+// the way through, so this texture carries real alpha and the sun throws the
+// pattern onto the balcony floors behind it.
 function breezeBlockTex(){ const c=cvs(128,128),x=c.getContext("2d");
+  // one block: solid frame + cross mullion, four rounded diamonds punched out
   x.fillStyle="#f3f0ea"; x.fillRect(0,0,128,128);
-  x.fillStyle="#b9b3a6";
-  for(let gx=0;gx<128;gx+=32) for(let gy=0;gy<128;gy+=32){
-    x.save(); x.translate(gx+16,gy+16); x.rotate(Math.PI/4);
-    x.fillRect(-7,-7,14,14); x.restore(); }
+  function diamond(cx,cy,r,fill){
+    x.save(); x.translate(cx,cy); x.rotate(Math.PI/4);
+    const k=r*0.30;                                    // corner rounding
+    x.beginPath();
+    x.moveTo(-r+k,-r); x.lineTo(r-k,-r); x.quadraticCurveTo(r,-r,r,-r+k);
+    x.lineTo(r,r-k);   x.quadraticCurveTo(r,r,r-k,r);
+    x.lineTo(-r+k,r);  x.quadraticCurveTo(-r,r,-r,r-k);
+    x.lineTo(-r,-r+k); x.quadraticCurveTo(-r,-r,-r+k,-r);
+    x.closePath(); fill(); x.restore();
+  }
+  const cs=[[33,33],[95,33],[33,95],[95,95]];
+  // first a dark reveal ring so the cut edges read with thickness…
+  x.fillStyle="#9c968a";
+  for(const [px,py] of cs) diamond(px,py,25,()=>x.fill());
+  // …then punch the openings clean through
+  x.globalCompositeOperation="destination-out";
+  for(const [px,py] of cs) diamond(px,py,21.5,()=>x.fill());
+  x.globalCompositeOperation="source-over";
   const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+// scalloped arch trim: solid band with semicircular bites out of the top edge
+function scallopTex(){ const c=cvs(128,64),x=c.getContext("2d");
+  x.fillStyle="#f5f2ea"; x.fillRect(0,0,128,64);
+  x.globalCompositeOperation="destination-out";
+  for(let i=0;i<4;i++){ x.beginPath(); x.arc(16+i*32, 6, 14, 0, Math.PI*2); x.fill(); }
+  x.fillRect(0,0,128,4);
+  // source-atop, not source-over: the shading must land only on solid trim,
+  // otherwise it refills the notches with 0.55 alpha and alphaTest keeps them
+  x.globalCompositeOperation="source-atop";
+  x.fillStyle="rgba(180,174,162,0.55)";                 // soft shading under each arch
+  for(let i=0;i<4;i++){ x.beginPath(); x.arc(16+i*32, 6, 17, 0, Math.PI); x.fill(); }
+  x.globalCompositeOperation="source-over";
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+const TEX_SCALLOP = scallopTex();
+// --- relief (bump) maps -----------------------------------------------------
+// Three shares one UV transform per material (taken from `map`), so a bump map
+// automatically tiles in lockstep with the colour map it accompanies.
+// troweled stucco: coarse knockdown mottling + a fine sand tooth over it
+function stuccoBumpTex(){ const c=cvs(256,256),x=c.getContext("2d");
+  x.fillStyle="#808080"; x.fillRect(0,0,256,256);
+  for(let i=0;i<900;i++){                                  // knockdown trowel patches
+    const px=Math.random()*256, py=Math.random()*256, r=3+Math.random()*9;
+    x.fillStyle = Math.random()<0.5 ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.14)";
+    x.beginPath(); x.ellipse(px,py,r,r*(0.5+Math.random()*0.7),Math.random()*3.14,0,7); x.fill(); }
+  for(let i=0;i<9000;i++){                                 // fine aggregate tooth
+    x.fillStyle = Math.random()<0.5 ? "rgba(255,255,255,0.13)" : "rgba(0,0,0,0.12)";
+    x.fillRect(Math.random()*256, Math.random()*256, 1.5, 1.5); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
+// brick pavers: mortar joints recessed, each brick face slightly domed & worn
+function paverBumpTex(){ const c=cvs(256,256),x=c.getContext("2d");
+  x.fillStyle="#3a3a3a"; x.fillRect(0,0,256,256);                    // mortar sits low
+  const bw=64,bh=32;
+  for(let row=0; row*bh<256; row++){ const off=(row%2)*bw/2;
+    for(let bx=-bw; bx<256; bx+=bw){ const px=bx+off+2.2, py=row*bh+2.2, w=bw-4.4, h=bh-4.4;
+      const g=x.createLinearGradient(px,py,px,py+h);
+      g.addColorStop(0,"#b4b4b4"); g.addColorStop(0.45,"#d2d2d2"); g.addColorStop(1,"#9e9e9e");
+      x.fillStyle=g; x.fillRect(px,py,w,h);
+      x.fillStyle="rgba(0,0,0,0.16)";                                // chipped, rounded arrises
+      x.fillRect(px,py,w,1.6); x.fillRect(px,py+h-1.6,w,1.6);
+      x.fillRect(px,py,1.6,h); x.fillRect(px+w-1.6,py,1.6,h);
+      for(let k=0;k<26;k++){ x.fillStyle = Math.random()<0.5?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.10)";
+        x.fillRect(px+Math.random()*w, py+Math.random()*h, 1.6, 1.6); } } }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
+// palm trunk: stacked leaf-scar rings over vertical fibre, mottled by weathering
+function palmBarkTex(){ const c=cvs(128,128),x=c.getContext("2d");
+  x.fillStyle="#9c7b4f"; x.fillRect(0,0,128,128);
+  for(let i=0;i<220;i++){                                   // vertical fibre
+    x.strokeStyle=["#8a6a41","#ab8a5c","#7d5f3a","#b59468"][i%4];
+    x.lineWidth=0.7+Math.random()*1.3; const sx=Math.random()*128, sy=Math.random()*128;
+    x.beginPath(); x.moveTo(sx,sy); x.lineTo(sx+(Math.random()-0.5)*2, sy+8+Math.random()*18); x.stroke(); }
+  for(let r=0;r<8;r++){                                     // leaf-scar rings
+    const y=r*16+(Math.random()-0.5)*3;
+    x.fillStyle="rgba(72,54,32,0.34)"; x.fillRect(0,y,128,3.2);
+    x.fillStyle="rgba(214,192,158,0.30)"; x.fillRect(0,y+3.2,128,1.8);
+    for(let k=0;k<10;k++){ x.fillStyle="rgba(60,45,28,0.20)";
+      x.fillRect(Math.random()*128, y+1, 3+Math.random()*7, 2.2); } }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+function palmBarkBump(){ const c=cvs(128,128),x=c.getContext("2d");
+  x.fillStyle="#8a8a8a"; x.fillRect(0,0,128,128);
+  for(let r=0;r<8;r++){ const y=r*16;
+    x.fillStyle="#4a4a4a"; x.fillRect(0,y,128,3.2);         // scar groove sits low
+    x.fillStyle="#d0d0d0"; x.fillRect(0,y+3.4,128,3.0); }   // ridge just above it
+  for(let i=0;i<600;i++){ x.fillStyle=Math.random()<0.5?"rgba(255,255,255,0.16)":"rgba(0,0,0,0.16)";
+    x.fillRect(Math.random()*128, Math.random()*128, 1.4, 3.5); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
+// perforated-metal patio tabletop (the classic punched-disc cafe table)
+function meshTopTex(){ const c=cvs(64,64),x=c.getContext("2d");
+  x.fillStyle="#cbd0d5"; x.fillRect(0,0,64,64);
+  for(let gy=0;gy<64;gy+=8) for(let gx=0;gx<64;gx+=8){
+    const ox=((gy/8)%2)*4;
+    x.fillStyle="#8b9299"; x.beginPath(); x.arc(gx+ox+4,gy+4,1.55,0,7); x.fill();
+    x.fillStyle="rgba(255,255,255,0.55)"; x.beginPath(); x.arc(gx+ox+4,gy+3.3,1.55,Math.PI,Math.PI*2); x.fill(); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+function meshTopBump(){ const c=cvs(64,64),x=c.getContext("2d");
+  x.fillStyle="#cccccc"; x.fillRect(0,0,64,64);
+  for(let gy=0;gy<64;gy+=8) for(let gx=0;gx<64;gx+=8){
+    const ox=((gy/8)%2)*4;
+    x.fillStyle="#3c3c3c"; x.beginPath(); x.arc(gx+ox+4,gy+4,1.55,0,7); x.fill(); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
+// moulded resin chair: vertical rib shading
+function ribBump(){ const c=cvs(64,64),x=c.getContext("2d");
+  x.fillStyle="#9a9a9a"; x.fillRect(0,0,64,64);
+  for(let i=0;i<64;i+=8){ x.fillStyle="#3f3f3f"; x.fillRect(i,0,2,64); x.fillStyle="#e0e0e0"; x.fillRect(i+2,0,1.4,64); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
+const TEX_PALMBARK = palmBarkTex(), TEX_PALMBUMP = palmBarkBump();
+const TEX_MESHTOP  = meshTopTex(),  TEX_MESHBUMP = meshTopBump();
+const TEX_RIBBUMP  = ribBump();
+const TEX_STUCCOBUMP = stuccoBumpTex();
+const TEX_PAVERBUMP  = paverBumpTex();
 const TEX_DIAMOND = diamondTex();
 const TEX_BREEZE = breezeBlockTex();
 // a proper rounded surfboard outline (extruded shape, not a box)
@@ -312,7 +456,8 @@ function sandTex(){ const c=cvs(256,256), x=c.getContext("2d");
     for(let xx=0;xx<=256;xx+=16) x.lineTo(xx, yy+Math.sin(xx*0.08+i)*4); x.stroke(); }
   x.globalAlpha=1; return c; }
 const SAND_TEX=new THREE.CanvasTexture(sandTex()); SAND_TEX.wrapS=SAND_TEX.wrapT=THREE.RepeatWrapping;
-const sandMat=new THREE.MeshStandardMaterial({map:SAND_TEX.clone(), roughness:1});
+const sandMat=new THREE.MeshStandardMaterial({map:SAND_TEX.clone(), roughness:1,
+  bumpMap:SAND_TEX.clone(), bumpScale:0.35});   // grain catches the low sun
 sandMat.map.repeat.set(70,70); sandMat.map.wrapS=sandMat.map.wrapT=THREE.RepeatWrapping;
 const sand = new THREE.Mesh(new THREE.PlaneGeometry(400,400), sandMat);
 sand.rotation.x = -Math.PI/2;
@@ -321,7 +466,8 @@ sand.receiveShadow = true;
 scene.add(sand);
 
 // brick paver patio floor (#a18979 bricks, running bond) — extended west to the hotel
-const paverMat = new THREE.MeshStandardMaterial({map:paverBrickTex(), roughness:1});
+const paverMat = new THREE.MeshStandardMaterial({map:paverBrickTex(), roughness:1,
+  bumpMap:TEX_PAVERBUMP.clone(), bumpScale:0.30});   // recessed mortar + worn arrises
 paverMat.map.repeat.set(19,11);
 const paver = new THREE.Mesh(new THREE.PlaneGeometry(40, 22), paverMat);
 paver.rotation.x = -Math.PI/2;
@@ -341,7 +487,8 @@ paverNW.position.set(27, 0.018, -3);
 paverNW.receiveShadow = true;
 scene.add(paverNW);
 // extend brick as far as possible toward the south / former parking area
-const paverMatS = new THREE.MeshStandardMaterial({map:paverBrickTex(), roughness:1});
+const paverMatS = new THREE.MeshStandardMaterial({map:paverBrickTex(), roughness:1,
+  bumpMap:TEX_PAVERBUMP.clone(), bumpScale:0.30});
 paverMatS.map.repeat.set(28,22);
 const paverS = new THREE.Mesh(new THREE.PlaneGeometry(58, 46), paverMatS);
 paverS.rotation.x = -Math.PI/2;
@@ -351,8 +498,23 @@ scene.add(paverS);
 // (brick mortar comes from the floor texture now — no separate grout overlay)
 
 // ocean beyond the beach (east) — animated turquoise water with rolling waves.
+// A scrolling ripple relief on top of the vertex swell gives the surface a fine
+// chop that catches the sun, instead of reading as one flat sheet of colour.
+function waterRippleTex(){ const c=cvs(256,256),x=c.getContext("2d");
+  x.fillStyle="#808080"; x.fillRect(0,0,256,256);
+  for(let i=0;i<520;i++){
+    const yy=Math.random()*256, amp=1+Math.random()*3, len=20+Math.random()*90, sx=Math.random()*256;
+    x.strokeStyle = Math.random()<0.5 ? "rgba(255,255,255,0.30)" : "rgba(0,0,0,0.26)";
+    x.lineWidth=0.8+Math.random()*2.2;
+    x.beginPath(); x.moveTo(sx,yy);
+    for(let k=0;k<=len;k+=6) x.lineTo(sx+k, yy+Math.sin(k*0.12+i)*amp);
+    x.stroke(); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
+const TEX_RIPPLE = waterRippleTex();
 const oceanGeo = new THREE.PlaneGeometry(600,340,40,18);
-const ocean = new THREE.Mesh(oceanGeo, mat(0x2fb0c6,{roughness:0.3, metalness:0.1}));
+const ocean = new THREE.Mesh(oceanGeo, mat(0x2fb0c6,{roughness:0.28, metalness:0.15,
+  bumpMap:(function(){const t=TEX_RIPPLE.clone(); t.repeat.set(48,26); t.needsUpdate=true; return t;})(),
+  bumpScale:0.55}));
 ocean.rotation.x = -Math.PI/2;
 ocean.position.set(LEN/2, 0.06, 96 + 170);
 scene.add(ocean);
@@ -361,6 +523,7 @@ const OCEAN_BASE = Float32Array.from(oceanGeo.attributes.position.array);   // r
 const ocean2 = new THREE.Mesh(new THREE.PlaneGeometry(600,200), mat(0x1f7fb0,{roughness:0.3, metalness:0.1}));
 ocean2.rotation.x = -Math.PI/2; ocean2.position.set(LEN/2, 0.055, 96 + 280); scene.add(ocean2);
 // rolling foam crests that march toward the shore and reset
+const SWASH={};   // shoreline swash band, run up and back in the render loop
 const WAVES=[];
 for(let i=0;i<5;i++){ const w=new THREE.Mesh(new THREE.PlaneGeometry(560,3.4),
     new THREE.MeshBasicMaterial({color:0xe6f3f0,transparent:true,opacity:0.0,depthWrite:false}));
@@ -379,9 +542,48 @@ const BOATS=[];
 })();
 
 // ---------------------------------------------------------------------------
+// The Ocean City skyline: condo towers marching away up and down the beach.
+// They sit deep in the fog on purpose — they are a distance cue, not scenery —
+// and their balcony bands light up after dark.
+// ---------------------------------------------------------------------------
+const SKYLINE_MATS=[];
+(function(){
+  function towerTex(band, wall){ const c=cvs(64,128), x=c.getContext("2d");
+    x.fillStyle=wall; x.fillRect(0,0,64,128);
+    for(let y=6;y<128;y+=9){                        // stacked balcony bands
+      x.fillStyle="rgba(0,0,0,0.20)"; x.fillRect(0,y,64,4.5);
+      x.fillStyle=band;               x.fillRect(0,y+4.5,64,1.6); }
+    for(let i=0;i<40;i++){ x.fillStyle="rgba(255,255,255,0.06)";
+      x.fillRect(Math.random()*64, Math.random()*128, 6, 2); }
+    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
+  // the balcony bands double as the emissive map, so they glow after dark
+  function towerMat(band, wall, emis){
+    const m=new THREE.MeshStandardMaterial({map:towerTex(band,wall), roughness:0.9,
+      emissive:new THREE.Color(emis), emissiveIntensity:0});
+    m.emissiveMap=m.map; SKYLINE_MATS.push(m); return m; }
+  const mats=[ towerMat("#e9e3d6","#d8d2c6",0xffcf8a),
+               towerMat("#dfe6ea","#c9d1d6",0xffd79a),
+               towerMat("#e6dcd0","#cfc4b6",0xffc879) ];
+  // x runs along the shore: negative = down the beach, positive = up past the bar
+  const spots=[[-52,26],[-72,31],[-96,24],[-124,33],[-158,28],[-198,35],[-250,30],
+               [84,25],[104,33],[130,26],[164,31],[206,27],[258,34],[318,29]];
+  for(let i=0;i<spots.length;i++){
+    const tx=spots[i][0], tz=spots[i][1], d=Math.abs(tx-LEN/2);
+    const h=16+Math.random()*26+d*0.02, w=9+Math.random()*13, dp=9+Math.random()*9;
+    const m=mats[i%mats.length];
+    const t=new THREE.Mesh(new THREE.BoxGeometry(w,h,dp), m);
+    t.position.set(tx, h/2, tz); t.rotation.y=(Math.random()-0.5)*0.35; scene.add(t);
+    const cap=new THREE.Mesh(new THREE.BoxGeometry(w*0.55,1.4,dp*0.55), mats[(i+1)%mats.length]);
+    cap.position.set(tx, h+0.7, tz); cap.rotation.y=t.rotation.y; scene.add(cap);
+  }
+})();
+
+// ---------------------------------------------------------------------------
 // Buildings
 // ---------------------------------------------------------------------------
-const wallMat = mat(0xf6f4ef,{roughness:0.95});
+const wallMat = mat(0xf6f4ef,{roughness:0.95,
+  bumpMap:(function(){const t=TEX_STUCCOBUMP.clone(); t.repeat.set(3,3); t.needsUpdate=true; return t;})(),
+  bumpScale:0.22});
 const roofMat = new THREE.MeshStandardMaterial({map:TEX_METALROOF.clone(), roughness:0.55, metalness:0.25});
 roofMat.map.repeat.set(8,8); roofMat.map.needsUpdate=true;
 const darkGlass = mat(0x2a3138,{roughness:0.5, metalness:0.2});
@@ -391,11 +593,21 @@ function buildHotel(){
   const g = new THREE.Group();
   const W = 27, H = 10.5, D = 9;       // length(X), height, depth(Z)
   const cx = 13.5, cz = -5.5;          // moved further west to widen the walkway
-  const hotelBody = mat(0xdcd5c6,{roughness:0.95});  // warm grey-tan stucco
-  const trimMat   = mat(0xf5f2ea,{roughness:0.9});   // bright white trim
+  const hotelBody = mat(0xdcd5c6,{roughness:0.95,                        // warm grey-tan stucco
+    bumpMap:(function(){const t=TEX_STUCCOBUMP.clone(); t.repeat.set(14,6); t.needsUpdate=true; return t;})(),
+    bumpScale:0.45});
+  const trimMat   = mat(0xf5f2ea,{roughness:0.9,                         // bright white trim
+    bumpMap:(function(){const t=TEX_STUCCOBUMP.clone(); t.repeat.set(10,1); t.needsUpdate=true; return t;})(),
+    bumpScale:0.35});
   const doorMat   = mat(0x6e3a1c,{roughness:0.75});  // warm stained-oak wood
-  const breezeMat = new THREE.MeshStandardMaterial({map:TEX_BREEZE.clone(), roughness:0.9});
-  breezeMat.map.repeat.set(20,1); breezeMat.map.needsUpdate=true;
+  const breezeMat = new THREE.MeshStandardMaterial({map:TEX_BREEZE.clone(), roughness:0.9,
+    alphaTest:0.5, side:THREE.DoubleSide});          // alphaTest (not transparent) keeps
+  breezeMat.map.repeat.set(44, 1);                   // it in the opaque pass and pierces its shadow
+  breezeMat.map.needsUpdate=true;
+  // scalloped arch band capping the roofline, as on the real building
+  const scalMat = new THREE.MeshStandardMaterial({map:TEX_SCALLOP.clone(), roughness:0.9,
+    alphaTest:0.5, side:THREE.DoubleSide});
+  scalMat.map.repeat.set(18,1); scalMat.map.needsUpdate=true;   // 4 arches per tile → ~0.37m each
   const bd = 1.3;                 // balcony deepening: slide the body west, keep the front rail line fixed
   const bodyCz = cz - bd;
   const body = box(W,H,D, hotelBody);
@@ -453,7 +665,20 @@ function buildHotel(){
     const colx = bx0 + i*bdx - bdx/2;
     const col=box(0.2, 10.2, 0.2, trimMat); col.position.set(colx, 5.1, faceZ+0.66); g.add(col);
   }
-  const par=box(W-0.6,0.5,0.1, trimMat); par.position.set(cx, H-0.1, faceZ+0.5); g.add(par);
+  const par=box(W-0.6,0.5,0.1, scalMat); par.position.set(cx, H-0.1, faceZ+0.5); g.add(par);
+  // --- rainwater goods: eave gutter + round downspouts down the column line ---
+  const gutter=box(W+1.0, 0.16, 0.20, trimMat); gutter.position.set(cx, H+0.16, faceZ+0.72); g.add(gutter);
+  const gLip=box(W+1.0, 0.05, 0.06, trimMat);   gLip.position.set(cx, H+0.25, faceZ+0.81); g.add(gLip);
+  for(let i=0;i<=nBays;i+=3){
+    const dx2 = bx0 + i*bdx - bdx/2;
+    const spout=new THREE.Mesh(new THREE.CylinderGeometry(0.065,0.065,H+0.1,10), trimMat);
+    spout.position.set(dx2, (H+0.1)/2, faceZ+0.80); spout.castShadow=true; g.add(spout);
+    for(const by of [3.4,6.4,9.4]){    // pipe straps
+      const strap=new THREE.Mesh(new THREE.CylinderGeometry(0.082,0.082,0.05,10), trimMat);
+      strap.position.set(dx2, by, faceZ+0.80); g.add(strap); }
+    const shoe=new THREE.Mesh(new THREE.CylinderGeometry(0.065,0.065,0.3,10), trimMat);
+    shoe.rotation.x=0.6; shoe.position.set(dx2, 0.12, faceZ+0.90); g.add(shoe);
+  }
   g.traverse(o=>{ if(o.isMesh){o.castShadow=true;o.receiveShadow=true;} });
   scene.add(g);
   addCollider(cx-W/2, cx+W/2, bodyCz-D/2, cz+D/2+0.2);   // back extends west; patio-side boundary unchanged
@@ -489,7 +714,8 @@ function buildCastle(){
   const g = new THREE.Group();
   const W=13, H=20, D=10, cx=LEN+1.5, cz=11;
   // diamond-rusticated white walls (matches the quilted stucco in the photo)
-  const brickMat=new THREE.MeshStandardMaterial({map:TEX_DIAMOND.clone(), roughness:0.95});
+  const brickMat=new THREE.MeshStandardMaterial({map:TEX_DIAMOND.clone(), roughness:0.95,
+    bumpMap:TEX_STUCCOBUMP.clone(), bumpScale:0.16});
   brickMat.map.repeat.set(8,12); brickMat.map.needsUpdate=true;
   const body = box(W,H,D, brickMat); body.position.set(cx,H/2,cz); g.add(body);
   const faceX = cx - W/2 - 0.05;
@@ -967,16 +1193,65 @@ buildBar();
 // ---------------------------------------------------------------------------
 const RED = new THREE.Color(0xd6342a);
 const WHT = new THREE.Color(0xf6f3ec);
-function canopyGeometry(radius, rise, segs){
+// A real market umbrella isn't a cone: the fabric domes over the ribs, sags
+// between them, scallops out at the rim and finishes in a short hanging valance.
+// Panel edges are shaded down so the ribs read as creases without extra geometry.
+function canopyGeometry(radius, rise, segs, seed){
+  let sd = (seed===undefined ? 1 : seed) * 9781 + 0.137;
+  const rnd = ()=>{ sd=Math.sin(sd)*43758.5453; return sd-Math.floor(sd); };
   const pos=[], col=[];
-  const apex=[0,rise,0];
+  const U=3, V=4;                               // cross / radial subdivisions per panel
+  const SCALLOP=0.085;                          // rim bulge at mid-panel
+  const VALANCE=0.135;                          // hanging skirt depth at the rim
+  const tintR=0.94+rnd()*0.11, tintW=0.95+rnd()*0.08;   // per-umbrella fade variation
+  const _c=new THREE.Color();
+
+  // fabric surface point for panel `i` at cross-fraction u, radial-fraction v
+  function P(i, u, v, sag){
+    const a  = ((i+u)/segs)*Math.PI*2;
+    const bulge = 1 + SCALLOP*Math.sin(Math.PI*u);
+    const r  = radius*bulge*v;
+    // domed profile: nearly flat over the hub, falling away steeply at the rim
+    let y = rise*(1 - Math.pow(v,1.6));
+    y -= sag*Math.sin(Math.PI*u)*v*v;           // fabric sags between the ribs
+    return [Math.cos(a)*r, y, Math.sin(a)*r];
+  }
+  function push(p, c){ pos.push(p[0],p[1],p[2]); col.push(c.r,c.g,c.b); }
+  function shade(base, u, v){
+    // dark at the rib seams, brightest mid-panel; a touch deeper toward the rim
+    const k = 0.78 + 0.22*Math.sin(Math.PI*Math.min(Math.max(u,0),1));
+    return _c.copy(base).multiplyScalar(k * (1 - 0.07*v));
+  }
+
   for(let i=0;i<segs;i++){
-    const a0=(i/segs)*Math.PI*2, a1=((i+1)/segs)*Math.PI*2;
-    const p0=[Math.cos(a0)*radius,0,Math.sin(a0)*radius];
-    const p1=[Math.cos(a1)*radius,0,Math.sin(a1)*radius];
-    pos.push(apex[0],apex[1],apex[2], p1[0],p1[1],p1[2], p0[0],p0[1],p0[2]);
-    const c=(i%2===0)?RED:WHT;
-    for(let k=0;k<3;k++) col.push(c.r,c.g,c.b);
+    const even=(i%2===0);
+    const base=(even?RED:WHT).clone().multiplyScalar(even?tintR:tintW);
+    const sag = 0.045 + rnd()*0.035;            // each panel hangs a little differently
+    for(let vi=0; vi<V; vi++){
+      const v0=vi/V, v1=(vi+1)/V;
+      for(let ui=0; ui<U; ui++){
+        const u0=ui/U, u1=(ui+1)/U;
+        const a=P(i,u0,v0,sag), b=P(i,u1,v0,sag), c2=P(i,u1,v1,sag), d=P(i,u0,v1,sag);
+        const ca=shade(base,u0,v0).clone(), cb=shade(base,u1,v0).clone(),
+              cc=shade(base,u1,v1).clone(), cd=shade(base,u0,v1).clone();
+        push(a,ca); push(c2,cc); push(b,cb);
+        push(a,ca); push(d,cd); push(c2,cc);
+      }
+    }
+    // valance: a short skirt hanging straight down off the scalloped rim,
+    // scooped so it dips lowest at mid-panel (the classic scallop silhouette)
+    for(let ui=0; ui<U; ui++){
+      const u0=ui/U, u1=(ui+1)/U;
+      const t0=P(i,u0,1,sag), t1=P(i,u1,1,sag);
+      const d0=VALANCE*(0.45+0.55*Math.sin(Math.PI*u0)), d1=VALANCE*(0.45+0.55*Math.sin(Math.PI*u1));
+      const b0=[t0[0],t0[1]-d0,t0[2]], b1=[t1[0],t1[1]-d1,t1[2]];
+      const ca=shade(base,u0,1).clone().multiplyScalar(0.88),
+            cb=shade(base,u1,1).clone().multiplyScalar(0.88),
+            cc=shade(base,u1,1).clone().multiplyScalar(0.7),
+            cd=shade(base,u0,1).clone().multiplyScalar(0.7);
+      push(t0,ca); push(b1,cc); push(t1,cb);
+      push(t0,ca); push(b0,cd); push(b1,cc);
+    }
   }
   const geo=new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pos,3));
@@ -984,12 +1259,24 @@ function canopyGeometry(radius, rise, segs){
   geo.computeVertexNormals();
   return geo;
 }
-const CANOPY_GEO = canopyGeometry(1.35, 0.8, 16);
+// a small pool of canopies so the grid doesn't read as one stamped shape,
+// while still sharing geometry between umbrellas
+const CANOPY_POOL = [];
+for(let i=0;i<6;i++) CANOPY_POOL.push(canopyGeometry(1.35, 0.8, 16, i+1));
+const CANOPY_GEO = CANOPY_POOL[0];
 const canopyMat = new THREE.MeshStandardMaterial({vertexColors:true, side:THREE.DoubleSide, roughness:0.85});
+const canopyMat2 = new THREE.MeshStandardMaterial({color:0xe9e5dc, side:THREE.DoubleSide, roughness:0.85});   // vent cap
 const poleMat   = mat(0x9aa0a6,{metalness:0.4, roughness:0.5});
-const tableMat  = mat(0x9aa0a6,{metalness:0.4, roughness:0.5});   // metal tabletops — match the umbrella poles
-const chairMat  = mat(0x123420,{roughness:0.8});   // deep green chairs
+// perforated-metal tabletops, as on the real patio, and ribbed resin chairs
+const tableMat  = mat(0xd3d8dc,{metalness:0.35, roughness:0.55,
+  map:(function(){const t=TEX_MESHTOP.clone();  t.repeat.set(5,5); t.needsUpdate=true; return t;})(),
+  bumpMap:(function(){const t=TEX_MESHBUMP.clone(); t.repeat.set(5,5); t.needsUpdate=true; return t;})(),
+  bumpScale:0.22});
+const chairMat  = mat(0x123420,{roughness:0.8,     // deep green chairs
+  bumpMap:(function(){const t=TEX_RIBBUMP.clone(); t.repeat.set(4,1); t.needsUpdate=true; return t;})(),
+  bumpScale:0.22});
 const finialMat = mat(0xd6342a);
+const MASTS=[];   // umbrella masts, rocked by the wind in the render loop
 // simple, clean resin patio chair (faces -Z; caller rotates it toward the table)
 function makeChair(){
   const c=new THREE.Group();
@@ -1051,14 +1338,29 @@ function makeUmbrella(withChairs){
   leg.position.y = 0.37; g.add(leg);
   const base = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.32,0.08,14), poleMat);
   base.position.y = 0.04; base.receiveShadow=true; g.add(base);
+  // Mast (pole + canopy + finial) is its own group so each umbrella can lean a
+  // degree or two — a yard of these standing perfectly plumb reads as CG.
+  const mast = new THREE.Group();
+  mast.rotation.x = (Math.random()-0.5)*0.035;
+  mast.rotation.z = (Math.random()-0.5)*0.035;
+  mast.userData = { rx:mast.rotation.x, rz:mast.rotation.z,
+                    ph:Math.random()*Math.PI*2, f:Math.random()*0.5 };
+  MASTS.push(mast);
+  g.add(mast);
   // pole runs continuously from the base up through the canopy hub to the finial
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.045,3.4,10), poleMat);
-  pole.position.y = 1.7; g.add(pole);
+  pole.position.y = 1.7; mast.add(pole);
   // canopy
-  const can = new THREE.Mesh(CANOPY_GEO, canopyMat);
-  can.position.y = 2.45; can.castShadow=true; g.add(can);
+  const can = new THREE.Mesh(CANOPY_POOL[(Math.random()*CANOPY_POOL.length)|0], canopyMat);
+  can.position.y = 2.45; can.rotation.y = Math.random()*Math.PI*2;
+  can.castShadow=true; can.receiveShadow=true; mast.add(can);
+  // vented cap over the hub, then the finial
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.075,0.11,0.07,12), poleMat);
+  hub.position.y = 3.21; mast.add(hub);
+  const vent = new THREE.Mesh(new THREE.ConeGeometry(0.19,0.13,12), canopyMat2);
+  vent.position.y = 3.32; vent.castShadow=true; mast.add(vent);
   const fin = new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,0.22,8), finialMat);
-  fin.position.y = 3.4; g.add(fin);
+  fin.position.y = 3.48; mast.add(fin);
   // chairs
   if(withChairs){
     const offs=[[0.95,0],[-0.95,0],[0,0.95],[0,-0.95]];
@@ -1079,13 +1381,16 @@ function placeUmbrella(x,z,withChairs,rot){
   scene.add(u);
   const r = withChairs ? 0.92 : 0.6;   // tables (and their chair ring) are solid
   addCollider(x-r, x+r, z-r, z+r);
+  addAO(x, z, 1.75, 1);                 // broad shade pooled under the canopy
+  addAO(x, z, 0.46, 3);                 // tight contact patch at the base
   addFoamFlat(x-0.6, x+0.6, z-0.6, z+0.6, 0.775);   // table top
-  addFoamDome(x, z, 1.32, 2.36, 2.96);              // umbrella canopy (foam follows the dome)
+  addFoamDome(x, z, 1.40, 2.46, 3.24);              // umbrella canopy (foam follows the new domed profile)
   if(withChairs){   // each chair is a sit-able patio seat facing the table
     const c=Math.cos(u.rotation.y), s=Math.sin(u.rotation.y);
     for(const [ox,oz] of [[0.95,0],[-0.95,0],[0,0.95],[0,-0.95]]){
       const dx=ox*c+oz*s, dz=-ox*s+oz*c;
       SEATS.push({x:x+dx, z:z+dz, yaw:Math.atan2(dx,dz), bar:false});
+      addAO(x+dx, z+dz, 0.36, 2);
       addFoamFlat(x+dx-0.24, x+dx+0.24, z+dz-0.24, z+dz+0.24, 0.485);   // chair seat
     }
   }
@@ -1151,6 +1456,45 @@ function buildTiki(cx,cz,W,D){
     const tuft=new THREE.Mesh(new THREE.ConeGeometry(0.07,ln,4), Math.random()<0.5?thatchA:thatchB);
     tuft.position.set(fx, postH+0.42-ln*0.3, fz); tuft.rotation.x=Math.PI; tuft.rotation.z=(Math.random()-0.5)*0.4; g.add(tuft); }
   const cap=box(0.4,0.5,0.4,thatchB); cap.position.y=postH+3.05; g.add(cap);
+  // exposed rafters and a ridge beam under the thatch, as in the real hut —
+  // the underside of the roof was previously a blank cone
+  (function(){
+    const beamM=mat(0x5c3a20,{roughness:0.9}), raftM=mat(0x77532f,{roughness:0.9});
+    const ridge=box(0.14,0.18,D+0.5, beamM); ridge.position.set(0,postH+0.72,0); g.add(ridge);
+    for(const bx of [-hw+0.2, hw-0.2]){ const pl=box(0.13,0.16,D+0.5, beamM); pl.position.set(bx,postH+0.12,0); g.add(pl); }
+    for(let i=0;i<9;i++){
+      const rz=-hd-0.15 + i*((D+0.3)/8);
+      // each rafter spans wall plate → ridge, so the pitch is derived rather
+      // than guessed: rise 0.60 over a run of hw
+      const run=hw, rise=0.60, len=Math.hypot(run,rise), pitch=Math.atan2(rise,run);
+      for(const sgn of [-1,1]){
+        const r=box(len,0.085,0.075, raftM);
+        r.position.set(sgn*run/2, postH+0.42, rz);
+        r.rotation.z = -sgn*pitch;
+        g.add(r);
+      }
+      const tie=box(W+0.5,0.06,0.055, raftM); tie.position.set(0,postH+0.10,rz); g.add(tie);
+    }
+    // ceiling fan with cast leaf blades, hung off the ridge (spun in the render loop)
+    const fan=new THREE.Group();
+    const drop=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.035,0.30,8), mat(0x2e2a26,{metalness:0.4,roughness:0.5}));
+    drop.position.y=0.15; fan.add(drop);
+    const hubF=new THREE.Mesh(new THREE.CylinderGeometry(0.11,0.13,0.10,12), mat(0x3a342c,{metalness:0.4,roughness:0.5}));
+    fan.add(hubF);
+    const leafM=mat(0x6b4a2c,{roughness:0.85, side:THREE.DoubleSide});
+    for(let i=0;i<5;i++){
+      const a=(i/5)*Math.PI*2;
+      const arm=new THREE.Mesh(new THREE.BoxGeometry(0.44,0.02,0.20), leafM);
+      arm.position.set(Math.cos(a)*0.34, -0.02, Math.sin(a)*0.34);
+      arm.rotation.y=-a; arm.rotation.z=0.16;           // blade pitch
+      fan.add(arm);
+      const tip=new THREE.Mesh(new THREE.SphereGeometry(0.13,8,6), leafM);   // rounded leaf tip
+      tip.scale.set(1,0.09,0.62);
+      tip.position.set(Math.cos(a)*0.55, -0.055, Math.sin(a)*0.55);
+      tip.rotation.y=-a; fan.add(tip);
+    }
+    fan.position.set(0, postH+0.30, 0); g.add(fan); FANS.push(fan);
+  })();
   // bottles on the back counter + a couple of jugs
   const bottleCols=[0x6fae3a,0xc23a1f,0xe6c133,0x3a86b0,0x8a4fb0,0xe8862a,0x2f9aa8];
   for(let i=0;i<12;i++){ const b=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,0.3+Math.random()*0.12,7), mat(bottleCols[i%bottleCols.length],{roughness:0.4}));
@@ -1187,6 +1531,7 @@ function buildTiki(cx,cz,W,D){
   g.position.set(cx,0,cz);
   scene.add(g);
   addCollider(cx-hw-0.3, cx+hw+0.3, cz-hd-0.3, cz+hd+0.3);
+  addAO(cx,cz,Math.max(W,D)*0.82,2);
 }
 buildTiki(14, 21, 5, 4);
 
@@ -1259,7 +1604,10 @@ addFoamFlat(25.5-1.3, 25.5+1.3, 22-0.85, 22+0.85, 0.45);   // stage deck collect
 // ---------------------------------------------------------------------------
 function makePalm(scale){
   const g=new THREE.Group();
-  const trunkMat=mat(0x9c7b4f,{roughness:0.95});
+  const trunkMat=mat(0xffffff,{roughness:0.95,
+    map:(function(){const t=TEX_PALMBARK.clone(); t.repeat.set(2,1.6); t.needsUpdate=true; return t;})(),
+    bumpMap:(function(){const t=TEX_PALMBUMP.clone(); t.repeat.set(2,1.6); t.needsUpdate=true; return t;})(),
+    bumpScale:0.35});
   const segH=0.7, n=6;
   let prev=null;
   for(let i=0;i<n;i++){
@@ -1315,6 +1663,7 @@ for(const [x,z,s] of palms){
   const p=makePalm(s); p.position.set(x,0,z); p.rotation.y=Math.random()*Math.PI*2; scene.add(p);
   p.userData.swayPh=Math.random()*Math.PI*2; p.userData.swayAmt=0.018+Math.random()*0.02; PALMS.push(p);
   addCollider(x-0.3,x+0.3,z-0.3,z+0.3);
+  addAO(x,z,0.52,3); addAO(x,z,1.5,0);   // trunk contact + dappled crown shade
 }
 
 // --- Seagulls gliding high over the beach (gentle wing-flap + slow circling) ---
@@ -1369,28 +1718,55 @@ const SMOKE=[];
 // ---------------------------------------------------------------------------
 // Planters / bushes along the hotel wall + low patio edging
 // ---------------------------------------------------------------------------
+// The real beds are a jumble of crotons, coleus and ti plants — burgundy,
+// lime, magenta — not a hedge of identical green balls. Each shrub picks a
+// base hue and shades its own lobes so a whole row never flattens out.
+const SHRUB_HUES=[
+  [0x377a3a,0.62],[0x2f6b33,0.62],[0x4b9040,0.58],   // greens (most common)
+  [0x7d9c2e,0.10],[0x9fae32,0.08],                   // chartreuse / lime
+  [0x6e2b32,0.09],[0x8a3a3f,0.07],                   // burgundy coleus
+  [0x9c4a6e,0.05],[0xa8582c,0.05]                    // magenta & rust croton
+];
+function pickShrubHue(){
+  let r=Math.random()*SHRUB_HUES.reduce((a,h)=>a+h[1],0);
+  for(const h of SHRUB_HUES){ r-=h[1]; if(r<=0) return h[0]; }
+  return SHRUB_HUES[0][0];
+}
 function bush(x,z,r){
   const g=new THREE.Group();
-  const m=mat(0x377a3a,{roughness:0.95});
+  const base=new THREE.Color(pickShrubHue());
+  const hsl={}; base.getHSL(hsl);
   for(let i=0;i<4;i++){
-    const s=new THREE.Mesh(new THREE.SphereGeometry(r*(0.7+Math.random()*0.4),8,8), m);
+    // each lobe drifts a little in hue and lightness — reads as leaf layering
+    const c=new THREE.Color().setHSL(
+      (hsl.h+(Math.random()-0.5)*0.035+1)%1,
+      Math.min(1, hsl.s*(0.85+Math.random()*0.35)),
+      Math.min(0.72, hsl.l*(0.82+Math.random()*0.42)));
+    const s=new THREE.Mesh(new THREE.SphereGeometry(r*(0.7+Math.random()*0.4),8,8), mat(c.getHex(),{roughness:0.95}));
     s.position.set((Math.random()-0.5)*r, r*0.5+(Math.random()*0.2), (Math.random()-0.5)*r);
+    s.scale.set(1, 0.78+Math.random()*0.3, 1);
     s.castShadow=true; g.add(s);
   }
   const pot=new THREE.Mesh(new THREE.CylinderGeometry(r*0.8,r*0.7,0.4,12), mat(0x7a4a32));
   pot.position.y=0.2; pot.castShadow=true; g.add(pot);
   g.position.set(x,0,z); scene.add(g);
+  addAO(x,z,r*1.5,2);
 }
 for(let x=2.5; x<=25; x+=2.3){ bush(x, 0.2, 0.55); }   // row tight against hotel
 // flower bed strip between the two umbrella grids (west end trimmed back, away from the walkway)
-const bedMat=mat(0x6a3f2a);
+const bedMat=new THREE.MeshStandardMaterial({map:(function(){
+    const t=brickTex("#8f5b40","#c4b3a2"); t.repeat.set(12,0.8); t.needsUpdate=true; return t; })(), roughness:0.95});   // U runs the 9.5m length, V the 0.45m height
 const bed=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.45,9.5), bedMat);
 bed.position.set(16,0.22,9.75); bed.castShadow=true; scene.add(bed);   // spans z 5.0 → 14.5
 addCollider(15.6,16.4,5.0,14.6);
 for(let z=5.8;z<14;z+=1.4){ bush(16,z,0.4); }   // west protrusion removed
 
-// raised brick planter beds along the sand side (east), with a walking gap
-const brickMat = mat(0x9c5a44,{roughness:0.95});
+// raised brick planter beds along the sand side (east), with a walking gap.
+// Coursed brick with mortar rather than a flat colour — these run the length of
+// the patio at knee height, so they are read up close constantly.
+const BED_BRICK = brickTex("#a5604a","#cbb9a6");
+const brickMat = new THREE.MeshStandardMaterial({map:(function(){
+    const t=BED_BRICK.clone(); t.repeat.set(18,1); t.needsUpdate=true; return t; })(), roughness:0.95});   // 14m run → ~0.19m bricks, 8 courses
 function lowWall(x1,z1,x2,z2){
   const dx=x2-x1, dz=z2-z1, len=Math.hypot(dx,dz);
   const w=new THREE.Mesh(new THREE.BoxGeometry(len,0.55,0.6), brickMat);
@@ -1458,6 +1834,7 @@ addCollider(20,32,15.4,16.0);
     fruit.position.set(cx-0.06+i*0.04, ST+1.02, cz+0.22); g.add(fruit); }
   scene.add(g);
   addCollider(cx-1.45, cx+1.45, cz-1.45, cz+1.45);
+  addAO(cx,cz,2.0,2);
 })();
 
 // ---------------------------------------------------------------------------
@@ -1490,6 +1867,7 @@ addCollider(20,32,15.4,16.0);
 function drum(x,z,c){
   const d=new THREE.Mesh(new THREE.CylinderGeometry(0.32,0.3,0.9,12), mat(c));
   d.position.set(x,0.45,z); d.castShadow=true; scene.add(d);
+  addAO(x,z,0.5,3);
 }
 drum(2.6,7,0x355b8c); drum(2.6,11,0x355b8c); drum(31,4,0x444);
 
@@ -1503,17 +1881,49 @@ const CLOUD_MATS = [];
 // gradient sky dome (tintable for day/night) + sun, moon, glow, water glint
 let skyDomeMat, sunMesh, sunGlow, moonMesh, waterGlint, stars;
 (function(){
-  const c=document.createElement("canvas"); c.width=16; c.height=256;
-  const ctx=c.getContext("2d");
-  const g=ctx.createLinearGradient(0,0,0,256);
-  // light, slightly hazy base so day/night tinting reads well; warm horizon glow
-  g.addColorStop(0.00,"#bcd9f2"); g.addColorStop(0.55,"#d7ecf7");
-  g.addColorStop(0.82,"#eef3ef"); g.addColorStop(1.00,"#f4ead8");
-  ctx.fillStyle=g; ctx.fillRect(0,0,16,256);
-  const tex=new THREE.CanvasTexture(c);
-  skyDomeMat=new THREE.MeshBasicMaterial({map:tex, side:THREE.BackSide, fog:false});
-  const dome=new THREE.Mesh(new THREE.SphereGeometry(320,24,16), skyDomeMat);
-  dome.position.set(LEN/2,0,WID/2); scene.add(dome);
+  // Three independently tinted bands (zenith / horizon / below-horizon haze)
+  // instead of one flat-tinted gradient bitmap, so dusk can go deep blue overhead
+  // while the horizon still burns orange — the way it actually reads from the patio.
+  // A sun-facing scatter halo widens and warms as the sun drops.
+  skyDomeMat = new THREE.ShaderMaterial({
+    uniforms:{
+      uZenith :{value:new THREE.Color(0xbcd9f2)},
+      uHorizon:{value:new THREE.Color(0xd7ecf7)},
+      uGround :{value:new THREE.Color(0xf4ead8)},
+      uSunDir :{value:new THREE.Vector3(0,1,0)},
+      uSunCol :{value:new THREE.Color(0xffd9a0)},
+      uSunAmt :{value:0.0},
+      uSunTight:{value:6.0}
+    },
+    vertexShader:`
+      varying vec3 vDir;
+      void main(){
+        vDir = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+      }`,
+    fragmentShader:`
+      uniform vec3 uZenith, uHorizon, uGround, uSunCol;
+      uniform vec3 uSunDir;
+      uniform float uSunAmt, uSunTight;
+      varying vec3 vDir;
+      void main(){
+        float h = vDir.y;
+        // above the horizon: horizon colour lifting to zenith (eased, so the
+        // gradient stays gentle near eye level and deepens overhead)
+        vec3 col = mix(uHorizon, uZenith, pow(smoothstep(0.0, 0.78, h), 0.78));
+        // below the horizon: warm sea haze
+        col = mix(col, uGround, smoothstep(0.0, -0.55, h));
+        // forward scatter around the sun, strongest low on the horizon
+        float d = max(dot(vDir, normalize(uSunDir)), 0.0);
+        col += uSunCol * (pow(d, uSunTight) * uSunAmt + pow(d, 1.6) * uSunAmt * 0.16);
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+    side:THREE.BackSide, fog:false, depthWrite:false
+  });
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(320,32,20), skyDomeMat);
+  dome.position.set(LEN/2,0,WID/2); dome.renderOrder=-1; scene.add(dome);
+  // base band colours, kept so the day/night cycle can tint each one separately
+  skyDomeMat.userData.base={ z:new THREE.Color(0xbcd9f2), h:new THREE.Color(0xd7ecf7), g:new THREE.Color(0xf4ead8) };
   // soft sun glow + bright disc
   sunGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xfff2c4,transparent:true,opacity:0,depthWrite:false,fog:false}));
   sunGlow.scale.set(110,110,1); scene.add(sunGlow);
@@ -1629,7 +2039,7 @@ function makeLamppost(x,z){
   halo.scale.set(1.8,1.8,1); halo.position.y=3.6; g.add(halo); LAMP_HALOS.push(halo.material);
   const L=new THREE.PointLight(0xffd9a0,0.0,13,2); L.position.set(0,3.6,0); g.add(L); LAMP_LIGHTS.push(L);
   g.position.set(x,0,z); scene.add(g);
-  addCollider(x-0.28,x+0.28,z-0.28,z+0.28);
+  addCollider(x-0.28,x+0.28,z-0.28,z+0.28); addAO(x,z,0.55,3);
 }
 // placed along edges and aisles, kept out of the hotel walkway and the bar approach
 // lining the entry walkway, the hotel side, and the beach-front edge at even spacing
@@ -1667,7 +2077,7 @@ function makeTorch(x,z){
   const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xffb24a,transparent:true,opacity:0.4,depthWrite:false})); halo.scale.set(1.5,1.5,1); halo.position.y=2.62; g.add(halo);
   const L=new THREE.PointLight(0xff9a3c,0.45,7,2); L.position.set(0,2.55,0); g.add(L); LAMP_LIGHTS.push(L);
   g.position.set(x,0,z); scene.add(g);
-  addCollider(x-0.16,x+0.16,z-0.16,z+0.16);
+  addCollider(x-0.16,x+0.16,z-0.16,z+0.16); addAO(x,z,0.4,3);
 }
 [[17.5,16.5],[20.5,17],[24.5,16.5],[17.5,21],[10,18],[29,17]].forEach(p=>makeTorch(p[0],p[1]));
 
@@ -1679,6 +2089,7 @@ function makeLounger(x,z,rotY,col){
   const back=box(0.6,0.08,0.72,fm); back.position.set(0,0.55,-0.78); back.rotation.x=0.6; back.castShadow=true; g.add(back);
   for(const lx of [-0.26,0.26]) for(const lz of [-0.6,0.6]){ const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,0.35,6),frame); leg.position.set(lx,0.17,lz); g.add(leg); }
   g.position.set(x,0,z); g.rotation.y=rotY; scene.add(g);
+  addAO(x,z,0.85,2);
 }
 [[8,27,0,0x3a6ea5],[10.6,27,0.1,0xeeeeee],[13.2,27.3,-0.08,0x3a6ea5],[23,27,0.05,0xd9544a],[25.6,27.4,0.12,0xeeeeee]]
   .forEach(p=>makeLounger(p[0],p[1],p[2],p[3]));
@@ -1770,12 +2181,23 @@ function emitFoam(x,y,z,vx,vy,vz,r){
 
 // festive string lights over the patio (dim by day, glow at night)
 const STR_MAT=new THREE.MeshBasicMaterial({color:0x6b6149, fog:false}); STRING_MATS.push(STR_MAT);
+const STR_WIRE=mat(0x2a2723,{roughness:0.85});
 function stringLights(x1,z1,x2,z2,y,n){
+  const pts=[];
   for(let i=0;i<=n;i++){
     const t=i/n, x=x1+(x2-x1)*t, z=z1+(z2-z1)*t, sag=Math.sin(t*Math.PI)*0.55;
-    const b=new THREE.Mesh(new THREE.SphereGeometry(0.06,6,6),STR_MAT);
-    b.position.set(x, y-sag, z); scene.add(b);
+    pts.push(new THREE.Vector3(x, y-sag, z));
+    // alternating bulb sizes, each hanging a little below the wire on its socket
+    const r=(i%2)?0.055:0.07;
+    const sock=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.024,0.05,6), STR_WIRE);
+    sock.position.set(x, y-sag-0.035, z); scene.add(sock);
+    const b=new THREE.Mesh(new THREE.SphereGeometry(r,7,6),STR_MAT);
+    b.position.set(x, y-sag-0.085, z); scene.add(b);
   }
+  // one continuous catenary the bulbs hang from
+  const wire=new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), Math.max(12,n), 0.012, 5, false), STR_WIRE);
+  scene.add(wire);
 }
 stringLights(2.5,15.6,16,15.6,2.7,22);
 stringLights(20,15.6,32,15.6,2.7,20);
@@ -1793,10 +2215,13 @@ stringLights(30.5,9,24,18,2.8,16);
   const beach=new THREE.Mesh(new THREE.PlaneGeometry(500,66), beachMat);
   beach.rotation.x=-Math.PI/2; beach.position.set(LEN/2,0.03,66); beach.receiveShadow=true; scene.add(beach);
   // wet-sand + foam bands at the shoreline
-  const wet=new THREE.Mesh(new THREE.PlaneGeometry(500,9), mat(0xc9b884,{roughness:1}));
+  // the swash zone stays wet, so it holds a sheen the dry beach doesn't
+  const wet=new THREE.Mesh(new THREE.PlaneGeometry(500,9), mat(0xc9b884,{roughness:0.34, metalness:0.28}));
   wet.rotation.x=-Math.PI/2; wet.position.set(LEN/2,0.04,90); scene.add(wet);
-  const foam=new THREE.Mesh(new THREE.PlaneGeometry(500,4), mat(0xe9efe6,{roughness:1}));
+  const foam=new THREE.Mesh(new THREE.PlaneGeometry(500,4),
+    new THREE.MeshStandardMaterial({color:0xe9efe6, roughness:1, transparent:true, opacity:0.85}));
   foam.rotation.x=-Math.PI/2; foam.position.set(LEN/2,0.05,95.5); scene.add(foam);
+  SWASH.foam=foam; SWASH.wet=wet;
 
   // rolling dunes — a tall foredune just past the patio, then lower ones receding to the horizon.
   // textured + scaled spheres; farther dunes are lighter & hazier for depth.
@@ -1867,9 +2292,16 @@ stringLights(30.5,9,24,18,2.8,16);
 (function(){
   const fern   = mat(0x2e7d3a,{roughness:0.95, side:THREE.DoubleSide});
   const fern2  = mat(0x46a14a,{roughness:0.9,  side:THREE.DoubleSide});
+  // crotons and coleus, the way the real beds are planted: fiery reds and
+  // oranges next to acid yellow-greens, deep burgundy and cream variegation
   const crotonR= mat(0xc23a1f,{roughness:0.85});
   const crotonO= mat(0xe8862a,{roughness:0.85});
   const crotonY= mat(0xe6c133,{roughness:0.85});
+  const crotonB= mat(0x6e2530,{roughness:0.85});   // burgundy ti / coleus
+  const crotonL= mat(0x9cb232,{roughness:0.85});   // chartreuse
+  const crotonP= mat(0xa8446e,{roughness:0.85});   // magenta coleus
+  const crotonC= mat(0xd9cf9a,{roughness:0.85});   // cream variegation
+  const CROTONS=[crotonR,crotonO,crotonY,crotonB,crotonL,crotonP,crotonC,crotonR,crotonO,crotonB];
   const bananaM= mat(0x2f8a3e,{roughness:0.8, side:THREE.DoubleSide});
   const flowerMats=[mat(0xe23b3b,{roughness:0.7}),mat(0xe85a8a,{roughness:0.7}),mat(0xf08a2c,{roughness:0.7}),
                     mat(0xf2d23a,{roughness:0.7}),mat(0xf4eee2,{roughness:0.7}),mat(0x9b59b6,{roughness:0.7})];
@@ -1880,7 +2312,8 @@ stringLights(30.5,9,24,18,2.8,16);
     s=s||1;
     for(let i=0;i<3;i++){
       const b=new THREE.Mesh(new THREE.SphereGeometry(0.3*s,7,6), i%2?fern2:fern);
-      b.scale.set(1.2,0.8,1.2);
+      b.scale.set(1.1+Math.random()*0.3, 0.7+Math.random()*0.25, 1.1+Math.random()*0.3);
+      b.rotation.y=Math.random()*Math.PI;
       b.position.set(x+(Math.random()-0.5)*0.5, y+0.28*s, z+(Math.random()-0.5)*0.5);
       b.castShadow=true; scene.add(b);
     }
@@ -1890,11 +2323,14 @@ stringLights(30.5,9,24,18,2.8,16);
       blade.rotation.set((Math.random()-0.5)*0.5,0,(Math.random()-0.5)*0.5);
       scene.add(blade);
     }
-    const cols=[crotonR,crotonO,crotonY];
-    for(let i=0;i<3;i++){
-      const c=new THREE.Mesh(new THREE.ConeGeometry(0.09*s,0.42*s,5), cols[i%3]);
-      c.position.set(x+(Math.random()-0.5)*0.7, y+0.32*s, z+(Math.random()-0.5)*0.7);
-      c.rotation.z=(Math.random()-0.5)*0.4; c.castShadow=true; scene.add(c);
+    // 4-5 croton spears per clump, each a different cultivar colour
+    const nC=4+((Math.random()*2)|0);
+    for(let i=0;i<nC;i++){
+      const c=new THREE.Mesh(new THREE.ConeGeometry(0.085*s,(0.36+Math.random()*0.16)*s,5),
+                             CROTONS[(Math.random()*CROTONS.length)|0]);
+      c.position.set(x+(Math.random()-0.5)*0.8, y+0.32*s, z+(Math.random()-0.5)*0.8);
+      c.rotation.z=(Math.random()-0.5)*0.5; c.rotation.x=(Math.random()-0.5)*0.3;
+      c.castShadow=true; scene.add(c);
     }
     // bright tropical blooms nestled in the foliage (hibiscus / impatiens look)
     for(let i=0;i<3;i++){
@@ -1931,7 +2367,12 @@ stringLights(30.5,9,24,18,2.8,16);
   bananaPlant(4,15.7,0.55); bananaPlant(31,15.7,0.55); bananaPlant(16,13.5,0.45);
 
   // raised brick bed + lush border along the hotel wall (west) — tight against the hotel
-  const hb=new THREE.Mesh(new THREE.BoxGeometry(24,0.5,1.0), mat(0x9c5a44,{roughness:0.95}));
+  // whitewashed brick along the hotel wall, as in the reference — it bounces
+  // light back into the walkway instead of muddying it
+  const hbMat=new THREE.MeshStandardMaterial({map:(function(){
+      const t=brickTex("#efe9df","#d3cabb"); t.repeat.set(30,0.9); t.needsUpdate=true; return t; })(),   // 24m run → ~0.20m bricks
+    roughness:0.9});
+  const hb=new THREE.Mesh(new THREE.BoxGeometry(24,0.5,1.0), hbMat);
   hb.position.set(14,0.25,0.2); hb.castShadow=true; scene.add(hb);
   addCollider(2,26,-0.3,0.7);
   for(let x=3;x<26;x+=1.8) clump(x,0.2,0.5,0.95);
@@ -1957,10 +2398,90 @@ stringLights(30.5,9,24,18,2.8,16);
     }
     const back=new THREE.Mesh(new THREE.BoxGeometry(0.6,0.7,0.08),m);
     back.position.set(x,0.95,z-0.28); back.rotation.x=-0.3; scene.add(back);
-    addCollider(x-0.4,x+0.4,z-0.4,z+0.4);
+    addCollider(x-0.4,x+0.4,z-0.4,z+0.4); addAO(x,z,0.55,2);
   }
   chairStack(33,18,0x2f6fae); chairStack(34,21,0x2f6fae); chairStack(6,24,0x3a7a3a);
 })();
+
+// ---------------------------------------------------------------------------
+// Ground contact shading — every AO patch collected during world-building is
+// merged into one mesh. Four strength levels share one vertical atlas strip and
+// a patch picks its level through its UVs, so the set stays a single draw call.
+// ---------------------------------------------------------------------------
+const AO_MESH = (function(){
+  if(!AO_SPOTS.length) return null;
+  const LV=4, S=64;
+  const c=cvs(S, S*LV), x=c.getContext("2d");
+  const peak=[0.20,0.34,0.50,0.66];                 // level 0 = whisper, 3 = firm contact
+  for(let l=0;l<LV;l++){
+    const cy=l*S+S/2;
+    const g=x.createRadialGradient(S/2,cy,0,S/2,cy,S/2);
+    g.addColorStop(0.00,"rgba(0,0,0,"+peak[l]+")");
+    g.addColorStop(0.45,"rgba(0,0,0,"+(peak[l]*0.62)+")");
+    g.addColorStop(0.78,"rgba(0,0,0,"+(peak[l]*0.20)+")");
+    g.addColorStop(1.00,"rgba(0,0,0,0)");
+    x.fillStyle=g; x.fillRect(0,l*S,S,S);
+  }
+  const tex=new THREE.CanvasTexture(c);
+  const pos=new Float32Array(AO_SPOTS.length*6*3), uv=new Float32Array(AO_SPOTS.length*6*2);
+  let pi=0, ui=0;
+  for(const sp of AO_SPOTS){
+    const l=Math.max(0,Math.min(3,sp.l|0)), v0=l/LV, v1=(l+1)/LV, r=sp.r, y=0.045;
+    const quad=[[-r,-r,0,v0],[r,-r,1,v0],[r,r,1,v1],[-r,-r,0,v0],[r,r,1,v1],[-r,r,0,v1]];
+    for(const q of quad){
+      pos[pi++]=sp.x+q[0]; pos[pi++]=y; pos[pi++]=sp.z+q[1];
+      uv[ui++]=q[2];       uv[ui++]=q[3];
+    }
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos,3));
+  geo.setAttribute("uv",       new THREE.BufferAttribute(uv,2));
+  const m=new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    map:tex, transparent:true, depthWrite:false,
+    color:0x2b2a26, opacity:0.85,
+    polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2 }));
+  m.renderOrder=1; m.frustumCulled=false; scene.add(m);
+  return m;
+})();
+
+// ---------------------------------------------------------------------------
+// Airborne motes — sea haze, pollen and kicked-up sand hanging in the light.
+// Camera-locked, so a modest count always fills the frame; they read strongest
+// against dark backdrops and low sun, which is when the air really is thick.
+// ---------------------------------------------------------------------------
+const MOTES = (function(){
+  const N=280, BOX=15, TOP=7.5;
+  const pos=new Float32Array(N*3);
+  const drift=new Float32Array(N*3), phase=new Float32Array(N);
+  for(let i=0;i<N;i++){
+    pos[i*3]=(Math.random()-0.5)*2*BOX; pos[i*3+1]=Math.random()*TOP; pos[i*3+2]=(Math.random()-0.5)*2*BOX;
+    drift[i*3]=0.10+Math.random()*0.30; drift[i*3+1]=(Math.random()-0.5)*0.12; drift[i*3+2]=(Math.random()-0.5)*0.22;
+    phase[i]=Math.random()*Math.PI*2;
+  }
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(pos,3));
+  const mtl=new THREE.PointsMaterial({map:GLOW_TEX, color:0xfff0d4, size:0.075,
+    sizeAttenuation:true, transparent:true, opacity:0, depthWrite:false, fog:true,
+    blending:THREE.AdditiveBlending});
+  const pts=new THREE.Points(geo, mtl); pts.frustumCulled=false; scene.add(pts);
+  return {pts:pts, geo:geo, mtl:mtl, N:N, BOX:BOX, TOP:TOP, drift:drift, phase:phase, seeded:false};
+})();
+function updateMotes(dt, camp, t){
+  const M=MOTES, a=M.geo.attributes.position.array;
+  if(!M.seeded){ for(let i=0;i<M.N;i++){ a[i*3]+=camp.x; a[i*3+2]+=camp.z; } M.seeded=true; }
+  const gust=1+windAmt*2.6;
+  for(let i=0;i<M.N;i++){
+    const o=i*3;
+    a[o]   += (M.drift[o]  *gust + windDx*windAmt*1.4)*dt;
+    a[o+1] += (M.drift[o+1] + Math.sin(t*0.7+M.phase[i])*0.10)*dt;
+    a[o+2] += (M.drift[o+2]*gust + windDz*windAmt*1.4)*dt;
+    // wrap around the camera so the swarm follows it without ever popping into view
+    if(a[o]-camp.x >  M.BOX) a[o]-=2*M.BOX; else if(a[o]-camp.x < -M.BOX) a[o]+=2*M.BOX;
+    if(a[o+2]-camp.z >  M.BOX) a[o+2]-=2*M.BOX; else if(a[o+2]-camp.z < -M.BOX) a[o+2]+=2*M.BOX;
+    if(a[o+1] > M.TOP) a[o+1]=0.1; else if(a[o+1] < 0.05) a[o+1]=M.TOP;
+  }
+  M.geo.attributes.position.needsUpdate=true;
+}
 
 // ---------------------------------------------------------------------------
 // PLAYER + INPUT  (ported directly from the working Eastgate build)
@@ -2363,6 +2884,13 @@ function updateWeather(dt, camp){
     rainbow.lookAt(camp.x, camp.y, camp.z);
   } else if(rainbow.visible){ setRainbowOpacity(0); rainbow.visible=false; }
 }
+const gradeEl=document.getElementById("grade");
+let _gradeVig=-1, _gradeWarm=-1;
+// hoisted so the sky-band tinting doesn't allocate a handful of Colors a frame
+const SKY_DUSKZEN=new THREE.Color(0x2f5f96), SKY_DUSKGRD=new THREE.Color(0xffb173),
+      SKY_RAINZEN=new THREE.Color(0x4d565e), SKY_RAINHOR=new THREE.Color(0x6b747c),
+      SKY_RAINGRD=new THREE.Color(0x77808a),
+      SKY_FLASHZ =new THREE.Color(0xdfe7ee), SKY_FLASHH =new THREE.Color(0xe8eef4);
 function updateDayNight(dt, camp){
   dayTime = (dayTime + dt) % DAY_DURATION;
   const t = dayTime / DAY_DURATION;
@@ -2379,6 +2907,7 @@ function updateDayNight(dt, camp){
 
   // sun & moon discs on the sky sphere, relative to the camera (infinite feel)
   const sd=_tmp.set(-horiz, Math.max(sh,-0.2), 0.55).normalize();
+  const sdx=sd.x, sdy=sd.y, sdz=sd.z;                     // kept: _tmp is reused below
   sunMesh.position.copy(camp).addScaledVector(sd, 300); sunGlow.position.copy(sunMesh.position);
   const mdx=horiz, mdy=Math.max(-sh,-0.2);
   moonMesh.position.set(camp.x+mdx*300*0.7, camp.y+mdy*300, camp.z+0.55*300*0.7);
@@ -2412,7 +2941,26 @@ function updateDayNight(dt, camp){
     sky.lerp(new THREE.Color(0xe6ecf2), lf*0.7); fog.lerp(new THREE.Color(0xd6dde4), lf*0.5);
   }
 
-  skyDomeMat.color.copy(sky);
+  // sky bands: the phase tint modulates each band's own base colour, then dusk
+  // pushes extra warmth into the horizon and extra depth into the zenith
+  { const B=skyDomeMat.userData.base, U=skyDomeMat.uniforms;
+    const dusk = Math.max(0, 1 - Math.abs(sh)/0.30);        // 1 right at the horizon
+    U.uZenith.value.copy(B.z).multiply(sky).lerp(SKY_DUSKZEN, 0.30*dusk*(1-night));
+    U.uHorizon.value.copy(B.h).multiply(sky);
+    U.uGround.value.copy(B.g).multiply(sky).lerp(SKY_DUSKGRD, 0.35*dusk);
+    if(rainIntensity>0.001){ const ri=rainIntensity;        // storm flattens the banding out
+      U.uZenith.value.lerp(SKY_RAINZEN, 0.85*ri);
+      U.uHorizon.value.lerp(SKY_RAINHOR, 0.85*ri);
+      U.uGround.value.lerp(SKY_RAINGRD, 0.85*ri); }
+    if(lightning>0.001) { const lf=Math.min(1,lightning);
+      U.uZenith.value.lerp(SKY_FLASHZ, lf*0.6);
+      U.uHorizon.value.lerp(SKY_FLASHH, lf*0.6); }
+    U.uSunDir.value.set(sdx,sdy,sdz);
+    // the halo blooms wide and orange as the sun sets, and vanishes after dark
+    U.uSunCol.value.copy(mix(0xffb060, 0xfff0cf, Math.max(0,Math.min(1,(sh-0.02)/0.30))));
+    U.uSunAmt.value = Math.max(0, sh+0.10) * (0.42 + 0.85*dusk) * (1-0.9*rainIntensity);
+    U.uSunTight.value = 3.0 + 22.0*Math.max(0,Math.min(1,sh/0.5));
+  }
   scene.fog.color.copy(fog);
   if(scene.background) scene.background.copy(fog);
   sun.color.copy(sunc); sun.intensity=sunInt;
@@ -2423,6 +2971,10 @@ function updateDayNight(dt, camp){
   sunGlow.material.opacity = (0.22*up + (sh>0 && sh<0.28 ? 0.4*(1-sh/0.28) : 0)) * (1-rainIntensity);
   waterGlint.material.opacity = 0.4*up;
   waterGlint.material.color.copy(mix(0xffffff,0xffd9a0, sh<0.25?1:0));
+  // the glitter column tracks the sun's azimuth instead of sitting dead ahead,
+  // and stretches out as the sun drops toward the water
+  waterGlint.position.set(camp.x - horiz*70, 0.3, 150);
+  waterGlint.scale.set(20+16*(1-Math.min(1,Math.abs(sh)*2.5)), 60+70*(1-Math.min(1,sh*2)), 1);
   if(stars) stars.material.opacity = 0.95 * night * (1 - 0.85*rainIntensity);   // fade in at night, hide under heavy rain
 
   // reactive night fixtures (smoothly tied to the night factor)
@@ -2451,6 +3003,22 @@ function updateDayNight(dt, camp){
     w.m.emissiveIntensity = inten;
   }
   for(const m of CLOUD_MATS)  m.color.copy(cloudc);
+  for(const m of SKYLINE_MATS) m.emissiveIntensity = 0.85*night*(1-0.6*rainIntensity);
+
+  // airborne motes: barely there at noon, brightest raking through golden hour,
+  // a faint sparkle at night where the lampposts catch them, gone in the rain
+  { const gold=Math.max(0, 1-Math.abs(sh-0.16)/0.46);
+    MOTES.mtl.opacity = (0.05 + 0.30*gold*gold + 0.07*night) * (1-0.85*rainIntensity);
+    MOTES.mtl.color.copy(mix(0xcfe2ff, 0xffe6b8, Math.max(0,Math.min(1,sh*3)))); }
+
+  // screen grade: corners sink further after dark, the warm centre wash follows
+  // the sun. Written through CSS custom properties, and only when they actually
+  // move, so this never churns style recalculation every frame.
+  { const vig  = 1 + 0.55*night + 0.25*rainIntensity;
+    const warm = Math.max(0, Math.min(1.6, 0.35 + 1.15*Math.max(0, 1-Math.abs(sh-0.10)/0.42))) * (1-night) * (1-0.7*rainIntensity);
+    if(Math.abs(vig-_gradeVig)>0.02){ _gradeVig=vig; gradeEl.style.setProperty("--vig", vig.toFixed(2)); }
+    if(Math.abs(warm-_gradeWarm)>0.02){ _gradeWarm=warm; gradeEl.style.setProperty("--warm", warm.toFixed(2)); } }
+
   const nowms=performance.now();
   for(const c of CANDLES){ const op=Math.max(0,Math.min(1,night*1.1));
     c.flame.material.opacity = op*(0.85+0.15*Math.sin(nowms*0.012+c.flame.userData.ph));
@@ -2589,12 +3157,26 @@ function frame(){ requestAnimationFrame(frame);
     for(let i=0;i<pos.length;i+=3){ const bx=OCEAN_BASE[i], by=OCEAN_BASE[i+1];
       pos[i+2]=Math.sin(bx*0.045 + t*0.9)*0.7 + Math.sin(by*0.07 - t*0.7)*1.0; }
     oceanGeo.attributes.position.needsUpdate=true; oceanGeo.computeVertexNormals(); }
+  // the swash band runs up the sand and drains back, thinning as it goes —
+  // the beach edge was the one part of the water that never moved
+  if(SWASH.foam){ const sw=0.5+0.5*Math.sin(t*0.42);
+    SWASH.foam.position.z = 95.0 - sw*1.9;
+    SWASH.foam.scale.y = 0.75 + sw*0.75;
+    SWASH.foam.material.opacity = 0.55 + 0.32*sw;
+    SWASH.wet.position.z = 90.2 - sw*0.9; }
   for(const w of WAVES){ const u=w.userData;
     w.position.z -= u.spd*dt;                       // march toward the beach
     if(w.position.z < 93){ w.position.z = u.z0; }   // reset back out to sea
     const d=w.position.z-93;                          // distance from the break line
     w.material.opacity = Math.max(0, 0.5*(1 - d/26));
   }
+  // ocean chop drifts shoreward; the two axes scroll at different rates so the
+  // surface never settles into a repeating pattern
+  { const rt=ocean.material.bumpMap; if(rt){ rt.offset.x = t*0.012; rt.offset.y = -t*0.030; } }
+  // umbrellas rock on their bases — a whole patio of them dead still reads wrong
+  for(const m of MASTS){ const u=m.userData, gust=1+windAmt*5.5;
+    m.rotation.x = u.rx + Math.sin(t*(1.05+u.f)+u.ph)*0.010*gust + windDz*windAmt*0.022;
+    m.rotation.z = u.rz + Math.cos(t*(0.85+u.f)+u.ph)*0.010*gust - windDx*windAmt*0.022; }
   for(const p of PALMS){ const w=p.userData, amt=w.swayAmt*(1+windAmt*0.9);
     p.rotation.z = Math.sin(t*(0.7+windAmt*0.25) + w.swayPh)*amt + windAmt*0.06; }   // gentle extra sway + steady lean in wind
   for(const gl of GULLS){ const u=gl.userData;
@@ -2607,6 +3189,7 @@ function frame(){ requestAnimationFrame(frame);
   const _camp = droneMode ? droneCam.position : (topView ? mapCam.position : (isoView ? isoCam.position : camera.position));
   updateWeather(dt, _camp);
   updateDayNight(dt, _camp);
+  updateMotes(dt, _camp, t);
   updateAudio(dt);
   if(handVM) handVM.visible = drinkActive && !foamMode && !topView && !isoView && !droneMode;
   if(foamVM) foamVM.visible = foamMode && !topView && !isoView && !droneMode && !player.sitting;
@@ -2618,7 +3201,8 @@ function frame(){ requestAnimationFrame(frame);
 
   // intoxication: blurry screen + swaying view that intensify toward 100%
   { const blurPx = drunk*3.6;
-    if(Math.abs(blurPx-_lastBlur)>0.12){ _lastBlur=blurPx; renderer.domElement.style.filter = blurPx>0.05 ? ("blur("+blurPx.toFixed(2)+"px)") : ""; } }
+    if(Math.abs(blurPx-_lastBlur)>0.12){ _lastBlur=blurPx;
+      renderer.domElement.style.filter = blurPx>0.05 ? (BASE_GRADE+" blur("+blurPx.toFixed(2)+"px)") : BASE_GRADE; } }
 
   if(droneMode){
     drone.position.set(dronePos.x,dronePos.y,dronePos.z);
@@ -2656,6 +3240,21 @@ function frame(){ requestAnimationFrame(frame);
 
 addEventListener("resize",()=>{ camera.aspect=innerWidth/innerHeight;
   camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); fitMapCam(); fitIsoCam(); });
+
+// Anisotropic filtering across every tiled surface in the world. The paver and
+// sand planes are enormous and viewed almost edge-on from eye height, where
+// trilinear filtering smears them into mush a couple of metres out.
+(function(){
+  const A=renderer.capabilities.getMaxAnisotropy();
+  if(!A || A<2) return;
+  const seen=new Set(), KEYS=["map","bumpMap","normalMap","roughnessMap","metalnessMap","alphaMap","emissiveMap","aoMap"];
+  scene.traverse(function(o){
+    const ms = o.material ? (Array.isArray(o.material)?o.material:[o.material]) : null;
+    if(!ms) return;
+    for(const m of ms){ if(!m || seen.has(m)) continue; seen.add(m);
+      for(const k of KEYS){ const t=m[k]; if(t && t.anisotropy!==A){ t.anisotropy=A; t.needsUpdate=true; } } }
+  });
+})();
 
 // kick off
 document.getElementById("loading").style.display="none";
