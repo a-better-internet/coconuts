@@ -419,6 +419,79 @@ function ribBump(){ const c=cvs(64,64),x=c.getContext("2d");
   x.fillStyle="#9a9a9a"; x.fillRect(0,0,64,64);
   for(let i=0;i<64;i+=8){ x.fillStyle="#3f3f3f"; x.fillRect(i,0,2,64); x.fillStyle="#e0e0e0"; x.fillRect(i+2,0,1.4,64); }
   const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
+// --- foliage ----------------------------------------------------------------
+// A neutral grey leaf-mass texture: every shrub tints it with its own material
+// colour, so one shared map gives the whole garden leaf structure for free.
+// Light lobes are leaves catching the sun, dark gaps are the shade between them.
+function leafMassTex(){ const c=cvs(256,256),x=c.getContext("2d");
+  x.fillStyle="#808080"; x.fillRect(0,0,256,256);
+  function leaf(px,py,r,a,tone,alpha){
+    x.save(); x.translate(px,py); x.rotate(a);
+    x.fillStyle="rgba("+tone+","+alpha+")";
+    x.beginPath();                                  // pointed oval, like a leaf
+    x.moveTo(0,-r);
+    x.bezierCurveTo( r*0.72,-r*0.34,  r*0.72, r*0.34, 0, r);
+    x.bezierCurveTo(-r*0.72, r*0.34, -r*0.72,-r*0.34, 0,-r);
+    x.fill(); x.restore();
+  }
+  // shade pockets first, then leaves layered brightest last
+  for(let i=0;i<150;i++) leaf(Math.random()*256,Math.random()*256, 12+Math.random()*22,
+                             Math.random()*6.3, "40,44,38", 0.16+Math.random()*0.14);
+  for(let i=0;i<260;i++) leaf(Math.random()*256,Math.random()*256, 9+Math.random()*16,
+                             Math.random()*6.3, "228,236,214", 0.10+Math.random()*0.16);
+  for(let i=0;i<200;i++) leaf(Math.random()*256,Math.random()*256, 6+Math.random()*11,
+                             Math.random()*6.3, "255,255,240", 0.09+Math.random()*0.13);
+  // a few midribs catching light along the leaf centres
+  for(let i=0;i<170;i++){ const px=Math.random()*256, py=Math.random()*256,
+      a=Math.random()*6.3, L=7+Math.random()*13;
+    x.strokeStyle="rgba(255,255,236,0.13)"; x.lineWidth=0.9;
+    x.beginPath(); x.moveTo(px,py); x.lineTo(px+Math.cos(a)*L,py+Math.sin(a)*L); x.stroke(); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
+function leafMassBump(){ const c=cvs(256,256),x=c.getContext("2d");
+  x.fillStyle="#7a7a7a"; x.fillRect(0,0,256,256);
+  for(let i=0;i<420;i++){ const px=Math.random()*256, py=Math.random()*256,
+      r=6+Math.random()*18, a=Math.random()*6.3;
+    x.save(); x.translate(px,py); x.rotate(a);
+    x.fillStyle = Math.random()<0.5 ? "rgba(255,255,255,0.20)" : "rgba(0,0,0,0.18)";
+    x.beginPath(); x.ellipse(0,0,r*0.5,r,0,0,7); x.fill(); x.restore(); }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
+// croton: the wild yellow-and-red veining that makes these plants worth planting
+function crotonLeafTex(){ const c=cvs(128,128),x=c.getContext("2d");
+  x.fillStyle="#9a9a9a"; x.fillRect(0,0,128,128);
+  for(let i=0;i<26;i++){                             // blotchy variegation
+    x.fillStyle = ["rgba(255,246,170,0.55)","rgba(255,196,90,0.45)",
+                   "rgba(120,40,30,0.40)","rgba(210,240,150,0.40)"][i%4];
+    x.beginPath(); x.ellipse(Math.random()*128, Math.random()*128,
+      6+Math.random()*16, 3+Math.random()*9, Math.random()*3, 0, 7); x.fill(); }
+  // Veins at irregular spacing and weight, drifting slightly off vertical —
+  // evenly spaced straight lines read as a barcode, not as a leaf.
+  let vx=3;
+  while(vx<128){
+    const wob=(Math.random()-0.5)*16, wid=1.0+Math.random()*1.6, al=0.14+Math.random()*0.20;
+    x.strokeStyle="rgba(255,240,155,"+al+")"; x.lineWidth=wid;
+    x.beginPath(); x.moveTo(vx,0);
+    x.bezierCurveTo(vx+wob,42, vx-wob,86, vx+wob*0.4,128); x.stroke();
+    x.strokeStyle="rgba(255,235,140,"+(al*0.42)+")"; x.lineWidth=0.8;
+    for(let vy=3+Math.random()*6; vy<128; vy+=7+Math.random()*7){
+      const sp=5+Math.random()*5;
+      x.beginPath(); x.moveTo(vx,vy); x.lineTo(vx+sp,vy+4+Math.random()*3);
+      x.moveTo(vx,vy); x.lineTo(vx-sp,vy+4+Math.random()*3); x.stroke(); }
+    vx += 11+Math.random()*12;
+  }
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping;
+  try{t.colorSpace=THREE.SRGBColorSpace;}catch(e){t.encoding=THREE.sRGBEncoding;} return t; }
+// palm frond: the fine pinnae ribbing that runs the length of each blade
+function frondTex(){ const c=cvs(64,128),x=c.getContext("2d");
+  x.fillStyle="#8c8c8c"; x.fillRect(0,0,64,128);
+  for(let i=0;i<64;i+=3){
+    x.fillStyle="rgba(255,255,255,0.16)"; x.fillRect(i,0,1.4,128);
+    x.fillStyle="rgba(0,0,0,0.16)";       x.fillRect(i+1.6,0,1.2,128); }
+  x.fillStyle="rgba(255,255,255,0.22)"; x.fillRect(30,0,3.2,128);   // midrib
+  for(let i=0;i<120;i++){ x.fillStyle="rgba(0,0,0,0.10)";
+    x.fillRect(Math.random()*64, Math.random()*128, 5, 1.6); }      // dry flecks
+  const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
+const TEX_LEAF = leafMassTex(), TEX_LEAFBUMP = leafMassBump();
+const TEX_CROTON = crotonLeafTex(), TEX_FROND = frondTex();
 const TEX_PALMBARK = palmBarkTex(), TEX_PALMBUMP = palmBarkBump();
 const TEX_MESHTOP  = meshTopTex(),  TEX_MESHBUMP = meshTopBump();
 const TEX_RIBBUMP  = ribBump();
@@ -542,40 +615,138 @@ const BOATS=[];
 })();
 
 // ---------------------------------------------------------------------------
-// The Ocean City skyline: condo towers marching away up and down the beach.
-// They sit deep in the fog on purpose — they are a distance cue, not scenery —
-// and their balcony bands light up after dark.
+// Ocean City, up and down the beach. Buildings sit in a tight row with their
+// long axis running inland and the narrow end to the ocean, separated by
+// parking driveways — white stucco, flat roofs, dark recessed balcony bands
+// with pale railings, open parking under the ground floor, and a stair tower
+// breaking the roofline. Low-rise motels near in, condo towers behind.
+// Windows carry their own emissive map so only the glass lights up after dark,
+// not the whole facade.
 // ---------------------------------------------------------------------------
 const SKYLINE_MATS=[];
 (function(){
-  function towerTex(band, wall){ const c=cvs(64,128), x=c.getContext("2d");
-    x.fillStyle=wall; x.fillRect(0,0,64,128);
-    for(let y=6;y<128;y+=9){                        // stacked balcony bands
-      x.fillStyle="rgba(0,0,0,0.20)"; x.fillRect(0,y,64,4.5);
-      x.fillStyle=band;               x.fillRect(0,y+4.5,64,1.6); }
-    for(let i=0;i<40;i++){ x.fillStyle="rgba(255,255,255,0.06)";
-      x.fillRect(Math.random()*64, Math.random()*128, 6, 2); }
-    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
-  // the balcony bands double as the emissive map, so they glow after dark
-  function towerMat(band, wall, emis){
-    const m=new THREE.MeshStandardMaterial({map:towerTex(band,wall), roughness:0.9,
-      emissive:new THREE.Color(emis), emissiveIntensity:0});
-    m.emissiveMap=m.map; SKYLINE_MATS.push(m); return m; }
-  const mats=[ towerMat("#e9e3d6","#d8d2c6",0xffcf8a),
-               towerMat("#dfe6ea","#c9d1d6",0xffd79a),
-               towerMat("#e6dcd0","#cfc4b6",0xffc879) ];
-  // x runs along the shore: negative = down the beach, positive = up past the bar
-  const spots=[[-52,26],[-72,31],[-96,24],[-124,33],[-158,28],[-198,35],[-250,30],
-               [84,25],[104,33],[130,26],[164,31],[206,27],[258,34],[318,29]];
-  for(let i=0;i<spots.length;i++){
-    const tx=spots[i][0], tz=spots[i][1], d=Math.abs(tx-LEN/2);
-    const h=16+Math.random()*26+d*0.02, w=9+Math.random()*13, dp=9+Math.random()*9;
-    const m=mats[i%mats.length];
-    const t=new THREE.Mesh(new THREE.BoxGeometry(w,h,dp), m);
-    t.position.set(tx, h/2, tz); t.rotation.y=(Math.random()-0.5)*0.35; scene.add(t);
-    const cap=new THREE.Mesh(new THREE.BoxGeometry(w*0.55,1.4,dp*0.55), mats[(i+1)%mats.length]);
-    cap.position.set(tx, h+0.7, tz); cap.rotation.y=t.rotation.y; scene.add(cap);
+  const FW=192, FH=384;                                 // facade canvas
+  // one facade style: `floors` habitable levels over an open parking storey
+  function facadeStyle(floors, wallHex, railHex){
+    const alb=cvs(FW,FH), a=alb.getContext("2d");
+    const emi=cvs(FW,FH), e=emi.getContext("2d");
+    e.fillStyle="#000"; e.fillRect(0,0,FW,FH);
+    a.fillStyle=wallHex; a.fillRect(0,0,FW,FH);
+    // faint vertical soiling so the stucco isn't a flat swatch
+    for(let i=0;i<70;i++){ a.fillStyle="rgba(150,150,145,"+(0.03+Math.random()*0.05)+")";
+      a.fillRect(Math.random()*FW, 0, 2+Math.random()*7, FH); }
+    const park=FH*0.13;                                  // open parking storey at the base
+    const fh=(FH-park)/floors;                           // one habitable floor
+    const bays=6, bw=FW/bays;
+    for(let f=0; f<floors; f++){
+      const y0=FH-park-(f+1)*fh;
+      // recessed balcony walkway: the dark band that reads from a distance
+      a.fillStyle="#39424c"; a.fillRect(0, y0+fh*0.16, FW, fh*0.60);
+      a.fillStyle="rgba(0,0,0,0.30)"; a.fillRect(0, y0+fh*0.16, FW, fh*0.14);   // soffit shadow
+      // sliders and doors set back inside the recess
+      for(let b=0;b<bays;b++){
+        const bx=b*bw;
+        a.fillStyle="#5d6a76"; a.fillRect(bx+bw*0.12, y0+fh*0.24, bw*0.46, fh*0.44);
+        a.fillStyle="#48535e"; a.fillRect(bx+bw*0.64, y0+fh*0.24, bw*0.22, fh*0.44);
+        if(Math.random()<0.55){                          // a lit room behind the glass
+          e.fillStyle="rgba(255,206,140,"+(0.55+Math.random()*0.45)+")";
+          e.fillRect(bx+bw*0.12, y0+fh*0.24, bw*0.46, fh*0.44);
+        }
+      }
+      // railing: pale top rail with close verticals, as in the street photos
+      a.fillStyle=railHex;
+      a.fillRect(0, y0+fh*0.56, FW, fh*0.05);
+      for(let vx=0; vx<FW; vx+=3.2) a.fillRect(vx, y0+fh*0.56, 1.3, fh*0.20);
+      a.fillRect(0, y0+fh*0.75, FW, fh*0.03);
+      // bright floor slab edge between levels
+      a.fillStyle="#f4f2ec"; a.fillRect(0, y0+fh*0.78, FW, fh*0.22);
+      a.fillStyle="rgba(0,0,0,0.10)"; a.fillRect(0, y0+fh*0.98, FW, fh*0.02);
+    }
+    // ground floor: cars parked in shadow between structural columns
+    a.fillStyle="#2b3138"; a.fillRect(0, FH-park, FW, park);
+    for(let b=0;b<bays;b++){
+      a.fillStyle="rgba(255,255,255,0.10)";
+      a.fillRect(b*bw+bw*0.30, FH-park*0.62, bw*0.40, park*0.34);
+      a.fillStyle=wallHex; a.fillRect(b*bw, FH-park, bw*0.12, park);            // column
+    }
+    a.fillStyle="rgba(0,0,0,0.35)"; a.fillRect(0, FH-park, FW, park*0.16);
+    const T=t=>{ try{t.colorSpace=THREE.SRGBColorSpace;}catch(err){t.encoding=THREE.sRGBEncoding;}
+      t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; };
+    return { map:T(new THREE.CanvasTexture(alb)), emi:T(new THREE.CanvasTexture(emi)) };
   }
+  const STYLES=[ facadeStyle(4,  "#efece5", "#8fa6bd"), facadeStyle(3,  "#f2f0ea", "#7f97b0"),
+                 facadeStyle(5,  "#eae7e0", "#93a9bf"), facadeStyle(11, "#f0eee8", "#8aa2ba"),
+                 facadeStyle(15, "#eceae3", "#8098b2") ];
+  const roofMatFlat = mat(0xdedbd3,{roughness:0.95});
+  const parapetMat  = mat(0xf4f2ec,{roughness:0.9});
+  const stairRed    = mat(0xb5402f,{roughness:0.7});
+
+  function building(x, z, w, d, floors, styleIdx, opts){
+    opts=opts||{};
+    const st=STYLES[styleIdx], h=floors*2.85+2.2;
+    const map=st.map.clone(), emi=st.emi.clone();
+    map.needsUpdate=emi.needsUpdate=true;
+    // the texture carries 6 bays, so repeating it every 21.6m keeps one bay at
+    // roughly 3.6m however wide the building is
+    map.repeat.set(Math.max(0.5,w/21.6), 1); emi.repeat.copy(map.repeat);
+    const mEnd=new THREE.MeshStandardMaterial({map:map, roughness:0.92,
+      emissive:new THREE.Color(0xffce8c), emissiveMap:emi, emissiveIntensity:0});
+    const mapZ=st.map.clone(), emiZ=st.emi.clone();
+    mapZ.needsUpdate=emiZ.needsUpdate=true;
+    mapZ.repeat.set(Math.max(0.5,d/21.6), 1); emiZ.repeat.copy(mapZ.repeat);
+    const mSide=new THREE.MeshStandardMaterial({map:mapZ, roughness:0.92,
+      emissive:new THREE.Color(0xffce8c), emissiveMap:emiZ, emissiveIntensity:0});
+    SKYLINE_MATS.push(mSide, mEnd);
+    // BoxGeometry material order: +X -X +Y -Y +Z -Z. The long side elevations
+    // face ±X (their width is d), the narrow ocean/street ends face ±Z (width w),
+    // and the roof and underside stay plain.
+    const body=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+      [mSide,mSide,roofMatFlat,roofMatFlat,mEnd,mEnd]);
+    body.position.set(x,h/2,z); scene.add(body);
+    // parapet lip so the roofline reads as a hard white edge, not a cut-off box
+    const par=new THREE.Mesh(new THREE.BoxGeometry(w+0.5,0.9,d+0.5), parapetMat);
+    par.position.set(x,h+0.3,z); scene.add(par);
+    // stair / lift tower breaking the roofline, sometimes with a red hip roof
+    if(opts.tower!==false){
+      const tw=Math.min(w*0.42,6), th=3.2+Math.random()*2.2, tz=z+d*(0.16+Math.random()*0.2);
+      const tower=new THREE.Mesh(new THREE.BoxGeometry(tw,th,tw*1.15), parapetMat);
+      tower.position.set(x+(Math.random()-0.5)*w*0.2, h+th/2, tz); scene.add(tower);
+      if(opts.redRoof){
+        const cap=hipRoof(tw+1.0, tw*1.15+1.0, 1.5, stairRed);
+        cap.position.set(tower.position.x, h+th+0.75, tz); scene.add(cap);
+      }
+    }
+    // rooftop mechanical clutter
+    for(let i=0;i<3;i++){
+      const b=new THREE.Mesh(new THREE.BoxGeometry(0.8+Math.random()*1.6,0.7,0.8+Math.random()*1.4), roofMatFlat);
+      b.position.set(x+(Math.random()-0.5)*w*0.6, h+0.9, z+(Math.random()-0.5)*d*0.7); scene.add(b);
+    }
+  }
+
+  // asphalt service street the row backs onto, plus driveways between buildings
+  const asphalt=mat(0x6f7377,{roughness:1});
+  for(const sx of [-1,1]){
+    const road=new THREE.Mesh(new THREE.PlaneGeometry(320,11), asphalt);
+    road.rotation.x=-Math.PI/2; road.position.set(sx*195, 0.01, -24); scene.add(road);
+  }
+
+  // Low-rise motels near in, condo towers stacked behind them and further off.
+  // x runs along the shore; the ocean end of each building sits near z≈24.
+  const rows=[
+    // [x, z, width, depth, floors, style, redRoof]
+    [ -67,  6, 15, 34,  4, 0, true ], [ -85,  5, 13, 32,  3, 1, false],
+    [-102,  7, 17, 36,  4, 2, false], [-120,  4, 14, 30,  3, 1, true ],
+    [-131,  6, 16, 34,  5, 2, false], [-152,  5, 15, 32,  4, 0, false],
+    [  58,  6, 14, 32,  4, 1, false], [  76,  5, 16, 35,  3, 0, true ],
+    [  95,  7, 15, 33,  4, 2, false], [ 114,  4, 13, 30,  4, 1, false],
+    // towers set back behind the low-rise row
+    [ -70,-34, 20, 26, 11, 3, false], [-104,-32, 18, 24, 15, 4, false],
+    [-144,-36, 22, 28, 11, 3, false], [-196,-30, 20, 26, 15, 4, false],
+    [-252,-34, 24, 30, 11, 3, false], [  88,-33, 19, 25, 11, 3, false],
+    [ 132,-31, 21, 27, 15, 4, false], [ 188,-35, 20, 26, 11, 3, false],
+    [ 262,-32, 23, 29, 15, 4, false]
+  ];
+  for(const r of rows) building(r[0], r[1], r[2], r[3], r[4], r[5], {redRoof:r[6]});
 })();
 
 // ---------------------------------------------------------------------------
@@ -1140,9 +1311,148 @@ function buildBar(){
     bulb.position.set(30.5,4.0,bz); g.add(bulb); BAR_BULBS.push(bulb.material);
     const L=new THREE.PointLight(0xffd49a,0.0,10,2); L.position.set(30.2,3.9,bz); g.add(L); BAR_LIGHTS.push(L);
   }
+  // -------------------------------------------------------------------------
+  // Bar-top life. Nobody is modelled here, but people have clearly just been:
+  // ashtrays with cigarettes still going, napkins weighed down under drinks,
+  // coasters, spent limes, a bar towel over the rail.
+  // -------------------------------------------------------------------------
+  (function(){
+    const TOP=1.11;                                    // counter surface
+    const glassM=mat(0xdcecf2,{transparent:true,opacity:0.30,roughness:0.06});
+    const napkinM=mat(0xf6f3ea,{roughness:0.95});
+    const foilM=mat(0xb9bfc4,{metalness:0.55,roughness:0.35});
+
+    // --- ashtray with a cigarette resting in the notch, ember still alive ----
+    function ashtray(x,z,rot){
+      const grp=new THREE.Group(); grp.position.set(x,TOP,z); grp.rotation.y=rot||0;
+      const glassAsh=mat(0xcfd8db,{transparent:true,opacity:0.42,roughness:0.12,metalness:0.1});
+      const dish=new THREE.Mesh(new THREE.CylinderGeometry(0.085,0.065,0.028,18), glassAsh);
+      dish.position.y=0.014; grp.add(dish);
+      const rim=new THREE.Mesh(new THREE.TorusGeometry(0.082,0.011,8,20), glassAsh);
+      rim.rotation.x=Math.PI/2; rim.position.y=0.026; grp.add(rim);
+      // ash and a couple of stubbed butts in the bottom
+      const ash=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.05,0.008,14), mat(0x8d8880,{roughness:1}));
+      ash.position.y=0.03; grp.add(ash);
+      for(let i=0;i<2;i++){
+        const stub=new THREE.Mesh(new THREE.CylinderGeometry(0.006,0.006,0.032,7), mat(0xe8dfc8,{roughness:0.9}));
+        stub.rotation.set(Math.PI/2,0,Math.random()*3);
+        stub.position.set((Math.random()-0.5)*0.07, 0.037, (Math.random()-0.5)*0.07); grp.add(stub);
+      }
+      // the live cigarette: filter in the notch, paper out over the rim
+      const cig=new THREE.Group(); cig.position.set(0,0.036,0); cig.rotation.y=0.6;
+      const filt=new THREE.Mesh(new THREE.CylinderGeometry(0.0062,0.0062,0.022,8), mat(0xd8ab5e,{roughness:0.9}));
+      filt.rotation.z=Math.PI/2; filt.position.set(-0.052,0,0); cig.add(filt);
+      const paper=new THREE.Mesh(new THREE.CylinderGeometry(0.006,0.006,0.062,8), mat(0xf4f1e6,{roughness:0.9}));
+      paper.rotation.z=Math.PI/2; paper.position.set(-0.008,0.004,0); cig.add(paper);
+      const emberM=new THREE.MeshBasicMaterial({color:0xff6a1e});
+      const ember=new THREE.Mesh(new THREE.CylinderGeometry(0.0058,0.0048,0.012,8), emberM);
+      ember.rotation.z=Math.PI/2; ember.position.set(0.029,0.006,0); cig.add(ember);
+      const eGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xff7a28,
+        transparent:true,opacity:0.5,depthWrite:false,blending:THREE.AdditiveBlending}));
+      eGlow.scale.set(0.09,0.09,1); eGlow.position.set(0.030,0.007,0); cig.add(eGlow);
+      cig.rotation.z=0.10; grp.add(cig);
+      // a thread of smoke curling off the ember
+      const puffs=[];
+      for(let i=0;i<7;i++){
+        const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xd9d4cc,
+          transparent:true,opacity:0,depthWrite:false}));
+        sp.scale.set(0.05,0.05,1); grp.add(sp);
+        puffs.push({sp:sp, t:i/7, seed:Math.random()*6.28});
+      }
+      // the ember sits at roughly this offset inside the group once the
+      // cigarette's own rotation is taken into account — smoke leaves from there
+      SMOKERS.push({ember:emberM, glow:eGlow.material, puffs:puffs,
+                    ox:0.025, oy:0.045, oz:-0.017, seed:Math.random()*6.28});
+      g.add(grp);
+      addFoamFlat(x-0.09,x+0.09,z-0.09,z+0.09, TOP+0.03);
+    }
+
+    // --- stack of cocktail napkins, top one skewed, under a book of matches --
+    function napkins(x,z,rot){
+      const grp=new THREE.Group(); grp.position.set(x,TOP,z); grp.rotation.y=rot||0;
+      for(let i=0;i<5;i++){
+        const n=new THREE.Mesh(new THREE.BoxGeometry(0.105,0.0035,0.105), napkinM);
+        n.position.set((Math.random()-0.5)*0.006, 0.002+i*0.0038, (Math.random()-0.5)*0.006);
+        n.rotation.y=(Math.random()-0.5)*0.22; grp.add(n);
+      }
+      if(Math.random()<0.6){                            // matchbook on top
+        const mb=new THREE.Mesh(new THREE.BoxGeometry(0.042,0.008,0.038), mat(0xb8342a,{roughness:0.8}));
+        mb.position.set(0.02,0.026,0.01); mb.rotation.y=0.5; grp.add(mb);
+      }
+      g.add(grp);
+    }
+
+    // --- a drink left standing, with a lime wedge and a straw ---------------
+    function drink(x,z){
+      const grp=new THREE.Group(); grp.position.set(x,TOP,z);
+      const tall=Math.random()<0.5;
+      const h=tall?0.15:0.10, r=tall?0.037:0.043;
+      const gl=new THREE.Mesh(new THREE.CylinderGeometry(r,r*0.82,h,16), glassM);
+      gl.position.y=h/2; grp.add(gl);
+      const liq=new THREE.Mesh(new THREE.CylinderGeometry(r*0.94,r*0.8,h*0.66,14),
+        mat([0xd9a13a,0xe4692f,0xc8d84a,0xa8452a][(Math.random()*4)|0],{transparent:true,opacity:0.86}));
+      liq.position.y=h*0.34; grp.add(liq);
+      if(tall){                                         // straw poking out at an angle
+        const st=new THREE.Mesh(new THREE.CylinderGeometry(0.0038,0.0038,0.20,6),
+          mat([0xe23b3b,0x2f7fc4,0xf2c53d][(Math.random()*3)|0]));
+        st.position.set(0.012,h*0.72,0.008); st.rotation.z=0.22; grp.add(st);
+      }
+      const lime=new THREE.Mesh(new THREE.SphereGeometry(0.019,8,6,0,Math.PI), mat(0x8fbe3a,{roughness:0.7}));
+      lime.scale.set(1,1,0.38); lime.rotation.x=Math.PI/2; lime.rotation.z=0.5;
+      lime.position.set(r*0.9, h*0.96, 0); grp.add(lime);
+      g.add(grp);
+    }
+
+    // --- cork coaster, sometimes with a ring of condensation ----------------
+    function coaster(x,z){
+      const c=new THREE.Mesh(new THREE.CylinderGeometry(0.052,0.052,0.005,16), mat(0xb08b52,{roughness:0.95}));
+      c.position.set(x,TOP+0.003,z); c.rotation.y=Math.random()*3; g.add(c);
+    }
+
+    // Scatter it along the counter, skipping the stool positions so nothing
+    // lands where a drinker's elbows would be.
+    const spots=[4.6,5.4,6.5,7.4,8.3,9.4,10.2,11.1,12.2,13.1,14.0,15.0];
+    for(let i=0;i<spots.length;i++){
+      const z=spots[i], x=30.34+(Math.random()-0.5)*0.16;
+      const roll=i%4;
+      if(roll===0) ashtray(x, z, Math.random()*3);
+      else if(roll===1) napkins(x-0.06, z, Math.random()*3);
+      else if(roll===2){ coaster(x,z); drink(x,z); }
+      else if(Math.random()<0.6) drink(x+0.04, z);
+    }
+    // condiment caddy: straws, stirrers and cut fruit at the service end
+    (function(x,z){
+      const caddy=new THREE.Mesh(new THREE.BoxGeometry(0.20,0.075,0.13), mat(0x2f3338,{roughness:0.7}));
+      caddy.position.set(x,TOP+0.037,z); g.add(caddy);
+      for(let i=0;i<14;i++){
+        const st=new THREE.Mesh(new THREE.CylinderGeometry(0.0035,0.0035,0.13,5),
+          mat([0xe23b3b,0x2f7fc4,0xf2c53d,0xffffff][i%4]));
+        st.position.set(x-0.05+(i%7)*0.016, TOP+0.13, z-0.03+((i/7)|0)*0.03);
+        st.rotation.set((Math.random()-0.5)*0.2,0,(Math.random()-0.5)*0.2); g.add(st);
+      }
+      const tray=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.03,0.11), foilM);
+      tray.position.set(x+0.22,TOP+0.015,z); g.add(tray);
+      for(let i=0;i<7;i++){                              // lime and orange wedges
+        const w=new THREE.Mesh(new THREE.SphereGeometry(0.017,7,5,0,Math.PI),
+          mat(i%3?0x8fbe3a:0xe8952a,{roughness:0.7}));
+        w.scale.set(1,1,0.4); w.rotation.set(Math.PI/2,0,Math.random()*3);
+        w.position.set(x+0.22+(Math.random()-0.5)*0.11, TOP+0.036, z+(Math.random()-0.5)*0.07); g.add(w);
+      }
+    })(30.4, 4.9);
+    // bar towel slung over the drink rail
+    (function(x,z){
+      // the rail ledge spans y 1.01-1.11, so the towel has to sit on top of it
+      const t=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.012,0.30), mat(0xd8e2ea,{roughness:0.95}));
+      t.position.set(x,1.118,z); t.rotation.z=0.04; g.add(t);
+      const hang=new THREE.Mesh(new THREE.BoxGeometry(0.02,0.16,0.28), mat(0xcfdae3,{roughness:0.95}));
+      hang.position.set(x-0.07,1.02,z); g.add(hang);
+    })(28.2, 9.4);
+  })();
+
   g.traverse(o=>{ if(o.isMesh){o.castShadow=true;o.receiveShadow=true;} });
   scene.add(g);
 }
+const SMOKERS=[];   // lit cigarettes: ember flare + rising smoke, run per frame
 buildBar();
 
 // --- brass "ring for a shot" bell hanging at the bar (from the reference photos) ---
@@ -1621,9 +1931,12 @@ function makePalm(scale){
   const topY = n*segH*0.96;
   const topX = Math.sin((n-1)*0.5)*0.12;
   // crown of fronds — feathered fans of thin smooth blades (no rectangular cones)
-  const frondMat=mat(0x2f7d3f,{roughness:0.85, side:THREE.DoubleSide});
-  const frondMat2=mat(0x3c8a44,{roughness:0.85, side:THREE.DoubleSide});
-  const brownMat=mat(0xa98b56,{roughness:0.95, side:THREE.DoubleSide});
+  // fronds get the pinnae ribbing running along each blade
+  const fr=(hex)=>{ const t=TEX_FROND.clone(); t.repeat.set(1,1); t.needsUpdate=true;
+    return new THREE.MeshStandardMaterial({color:hex, map:t, roughness:0.85, side:THREE.DoubleSide}); };
+  const frondMat=fr(0x2f7d3f);
+  const frondMat2=fr(0x3c8a44);
+  const brownMat=fr(0xa98b56); brownMat.roughness=0.95;
   const NF=16;
   for(let i=0;i<NF;i++){
     const a=(i/NF)*Math.PI*2;
@@ -1727,6 +2040,25 @@ const SHRUB_HUES=[
   [0x6e2b32,0.09],[0x8a3a3f,0.07],                   // burgundy coleus
   [0x9c4a6e,0.05],[0xa8582c,0.05]                    // magenta & rust croton
 ];
+// Leafy material: the shared grey leaf-mass map tinted by `hex`, so a whole
+// garden of different-coloured plants still costs a handful of textures.
+// Materials are cheap; textures are not — r128 uploads every Texture object
+// separately even when they share one canvas, so the tile scale is quantised
+// and the resulting texture pair is cached and shared.
+const _LEAFTEX={};
+function leafTexPair(rep){
+  const k=(Math.round(Math.max(0.5,rep)*2)/2).toFixed(1);
+  let e=_LEAFTEX[k];
+  if(!e){ const m=TEX_LEAF.clone(), b=TEX_LEAFBUMP.clone();
+    m.repeat.set(+k,+k); b.repeat.set(+k,+k); m.needsUpdate=b.needsUpdate=true;
+    e=_LEAFTEX[k]={m:m,b:b}; }
+  return e;
+}
+function leafMat(hex, rep, bump){
+  const e=leafTexPair(rep);
+  return new THREE.MeshStandardMaterial({color:hex, map:e.m, bumpMap:e.b,
+    bumpScale:(bump===undefined?0.45:bump), roughness:0.95});
+}
 function pickShrubHue(){
   let r=Math.random()*SHRUB_HUES.reduce((a,h)=>a+h[1],0);
   for(const h of SHRUB_HUES){ r-=h[1]; if(r<=0) return h[0]; }
@@ -1742,7 +2074,7 @@ function bush(x,z,r){
       (hsl.h+(Math.random()-0.5)*0.035+1)%1,
       Math.min(1, hsl.s*(0.85+Math.random()*0.35)),
       Math.min(0.72, hsl.l*(0.82+Math.random()*0.42)));
-    const s=new THREE.Mesh(new THREE.SphereGeometry(r*(0.7+Math.random()*0.4),8,8), mat(c.getHex(),{roughness:0.95}));
+    const s=new THREE.Mesh(new THREE.SphereGeometry(r*(0.7+Math.random()*0.4),9,8), leafMat(c.getHex(), 2.2+Math.random()*1.2));
     s.position.set((Math.random()-0.5)*r, r*0.5+(Math.random()*0.2), (Math.random()-0.5)*r);
     s.scale.set(1, 0.78+Math.random()*0.3, 1);
     s.castShadow=true; g.add(s);
@@ -1808,7 +2140,7 @@ addCollider(20,32,15.4,16.0);
   const flowerCols=[0xe8862a,0xe6c133,0xc23a1f,0xeae0d0,0xb5546f];
   function flowerCluster(r,a){
     const x=cx+Math.cos(a)*r, z=cz+Math.sin(a)*r, rad=0.11+Math.random()*0.05;
-    const leaf=new THREE.Mesh(new THREE.SphereGeometry(rad,7,6), mat(0x357a3a));
+    const leaf=new THREE.Mesh(new THREE.SphereGeometry(rad,8,6), leafMat(0x357a3a, 3.2, 0.35));
     leaf.scale.y=0.7; leaf.position.set(x, RIM-0.02, z); leaf.castShadow=true; g.add(leaf);
     for(let k=0;k<3;k++){ const fl=new THREE.Mesh(new THREE.SphereGeometry(0.05,6,5), mat(flowerCols[Math.floor(Math.random()*flowerCols.length)]));
       fl.position.set(x+(Math.random()-0.5)*0.16, RIM+0.07, z+(Math.random()-0.5)*0.16); g.add(fl); }
@@ -1851,8 +2183,8 @@ addCollider(20,32,15.4,16.0);
     s.rotation.x=-Math.PI/2; s.position.set(-2.5 - i*2.3, 0.01, 3.0); scene.add(s); }
   // (parked cars removed)
   // hedge across the south edge — opening left open at the west (low Z) end
-  const hedgeM=mat(0x2f6e33,{roughness:0.95});
-  const hedgeM2=mat(0x368039,{roughness:0.95});
+  const hedgeM=leafMat(0x2f6e33, 1.5, 0.55);
+  const hedgeM2=leafMat(0x368039, 1.8, 0.55);
   for(let z=5; z<=22; z+=1.0){
     for(const [hy,hr] of [[0.7,0.8],[1.5,0.78],[2.25,0.66]]){   // stacked → ~3m tall barrier
       const h=new THREE.Mesh(new THREE.SphereGeometry(hr,7,6), Math.random()<0.5?hedgeM:hedgeM2);
@@ -1879,7 +2211,8 @@ const CLOUDS = [];
 const CLOUD_MATS = [];
 
 // gradient sky dome (tintable for day/night) + sun, moon, glow, water glint
-let skyDomeMat, sunMesh, sunGlow, moonMesh, waterGlint, stars;
+let skyDomeMat, sunMesh, sunGlow, moonMesh, moonMat, moonHalo, waterGlint, stars;
+let moonAgeDays = 8.4;      // where the moon starts in its 29.5-day cycle
 (function(){
   // Three independently tinted bands (zenith / horizon / below-horizon haze)
   // instead of one flat-tinted gradient bitmap, so dusk can go deep blue overhead
@@ -1928,8 +2261,155 @@ let skyDomeMat, sunMesh, sunGlow, moonMesh, waterGlint, stars;
   sunGlow=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xfff2c4,transparent:true,opacity:0,depthWrite:false,fog:false}));
   sunGlow.scale.set(110,110,1); scene.add(sunGlow);
   sunMesh=new THREE.Mesh(new THREE.SphereGeometry(7,16,16), new THREE.MeshBasicMaterial({color:0xfff4d2,fog:false})); scene.add(sunMesh);
-  // moon
-  moonMesh=new THREE.Mesh(new THREE.SphereGeometry(5,16,16), new THREE.MeshBasicMaterial({color:0xeef0ff,fog:false})); scene.add(moonMesh);
+  // --- Moon -----------------------------------------------------------------
+  // A real lunar disc: equirectangular surface map with maria, crater fields and
+  // a couple of ray systems, lit by a phase term rather than being a flat white
+  // ball. The mesh is turned to face the camera every frame, which is also what
+  // the real thing does — it is tidally locked, so we always see the near side.
+  (function(){
+    const W=1024, H=512, c=cvs(W,H), x=c.getContext("2d");
+    // lon/lat → canvas. u=0.25 faces the sphere's +Z, which lookAt points at the
+    // camera, so longitude 0 is the middle of the visible disc.
+    const P=(lon,lat)=>[ (((lon/360)+0.25)%1+1)%1*W, (90-lat)/180*H ];
+    const rnd=(function(){ let sd=20250905; return ()=>{ sd=(sd*1103515245+12345)&0x7fffffff; return sd/0x7fffffff; }; })();
+
+    // Highland base with broad tonal mottling, so the surface has large-scale
+    // structure before any craters land on it.
+    x.fillStyle="#a49f96"; x.fillRect(0,0,W,H);
+    for(let i=0;i<260;i++){
+      const px=rnd()*W, py=rnd()*H, r=40+rnd()*160;
+      const g=x.createRadialGradient(px,py,0,px,py,r);
+      const up=rnd()<0.5;
+      g.addColorStop(0, up?"rgba(206,200,190,0.14)":"rgba(120,116,110,0.13)");
+      g.addColorStop(1,"rgba(0,0,0,0)");
+      x.fillStyle=g; x.beginPath(); x.arc(px,py,r,0,7); x.fill();
+    }
+
+    // --- craters -------------------------------------------------------------
+    // Equirectangular stretches longitude near the poles, so a round crater has
+    // to be drawn WIDER in x by 1/cos(lat) to come back round on the sphere.
+    // A crater is a bowl, not a ring: sink the floor, then run the rim from lit
+    // on one side to shadowed on the other. Baking a single light direction is
+    // what real lunar plates look like and it reads far better than a flat ring.
+    function crater(px,py,r,depth){
+      const fg=x.createRadialGradient(px,py,0,px,py,r*0.9);
+      fg.addColorStop(0,   "rgba(92,89,85,"+(0.34*depth)+")");
+      fg.addColorStop(0.70,"rgba(104,101,96,"+(0.22*depth)+")");
+      fg.addColorStop(1,   "rgba(120,117,112,0)");
+      x.fillStyle=fg; x.beginPath(); x.arc(px,py,r*0.9,0,7); x.fill();
+      const lg=x.createLinearGradient(px-r,py-r,px+r,py+r);
+      lg.addColorStop(0,   "rgba(228,224,216,"+(0.44*depth)+")");   // sunlit rim
+      lg.addColorStop(0.45,"rgba(178,174,167,"+(0.08*depth)+")");
+      lg.addColorStop(1,   "rgba(66,64,60,"+(0.36*depth)+")");      // rim in shadow
+      x.strokeStyle=lg; x.lineWidth=Math.max(0.7, r*0.17);
+      x.beginPath(); x.arc(px,py,r*0.88,0,7); x.stroke();
+    }
+    function craterField(n, maxR, dmin){
+      for(let i=0;i<n;i++){
+        const px=rnd()*W, py=rnd()*H;
+        const lat=90-(py/H)*180, sq=Math.max(0.14, Math.cos(lat*Math.PI/180));
+        const r=1.0+Math.pow(rnd(),3.4)*maxR;                        // mostly small
+        x.save(); x.translate(px,py); x.scale(Math.min(4.0,1/sq), 1); x.translate(-px,-py);
+        crater(px,py,r,dmin+rnd()*(1-dmin)); x.restore();
+      }
+    }
+    craterField(560, 30, 0.45);                  // saturated highlands
+
+    // --- maria: basalt floods, laid over the craters so the basins read smooth
+    function mare(lon,lat,rx,ry,tone,rot){
+      const p=P(lon,lat);
+      x.save(); x.translate(p[0],p[1]); x.rotate(rot||0);
+      const g=x.createRadialGradient(0,0,0,0,0,Math.max(rx,ry));
+      g.addColorStop(0,tone); g.addColorStop(0.70,tone);
+      g.addColorStop(1,"rgba(120,116,110,0)");
+      x.fillStyle=g;
+      x.beginPath();                                  // ragged basin shore
+      for(let a=0;a<=Math.PI*2+0.01;a+=Math.PI/18){
+        const w=0.80+rnd()*0.38;
+        const px=Math.cos(a)*rx*w, py=Math.sin(a)*ry*w;
+        a===0 ? x.moveTo(px,py) : x.lineTo(px,py);
+      }
+      x.closePath(); x.fill(); x.restore();
+    }
+    mare(-25, 34, 78, 62, "rgba(96,95,97,0.93)", 0.2);     // Imbrium
+    mare(  17, 27, 52, 46, "rgba(103,102,101,0.92)", -0.3);// Serenitatis
+    mare(  30,  6, 55, 45, "rgba(98,98,100,0.93)", 0.1);   // Tranquillitatis
+    mare(  59, 17, 30, 27, "rgba(94,94,96,0.92)");         // Crisium
+    mare(  35,-16, 40, 30, "rgba(101,100,98,0.90)", -0.2); // Nectaris / Fecunditatis
+    mare(-58, 10,100, 85, "rgba(107,105,101,0.88)", 0.15); // Oceanus Procellarum
+    mare(-20,-14, 46, 34, "rgba(104,102,99,0.90)", 0.35);  // Nubium / Cognitum
+    mare(-14, -3, 30, 24, "rgba(101,100,98,0.88)");        // Insularum
+    mare( 160, 20, 26, 22, "rgba(126,124,119,0.70)");      // far side stays bright
+    mare(-150,-25, 30, 24, "rgba(129,127,122,0.68)");
+    craterField(130, 8, 0.30);                   // sparse craters over the maria
+
+    // --- ray systems: Tycho and Copernicus throw bright ejecta streaks --------
+    function rays(lon,lat,len,n,alpha){
+      const p=P(lon,lat);
+      x.save(); x.translate(p[0],p[1]);
+      for(let i=0;i<n;i++){
+        const a=rnd()*Math.PI*2, L=len*(0.30+rnd()*0.70), w=1.0+rnd()*3.4;
+        const r0=len*0.10;                            // rays begin clear of the rim
+        const x0=Math.cos(a)*r0, y0=Math.sin(a)*r0, x1=Math.cos(a)*L, y1=Math.sin(a)*L;
+        const g=x.createLinearGradient(x0,y0,x1,y1);
+        g.addColorStop(0,   "rgba(236,234,228,0)");
+        g.addColorStop(0.18,"rgba(236,234,228,"+alpha+")");
+        g.addColorStop(1,   "rgba(236,234,228,0)");
+        x.strokeStyle=g; x.lineWidth=w;
+        x.beginPath(); x.moveTo(x0,y0); x.lineTo(x1,y1); x.stroke();
+      }
+      x.restore();
+    }
+    rays(-11,-43, 210, 95, 0.16);                 // Tycho
+    rays(-20, 10, 120, 50, 0.10);                 // Copernicus
+    { const t=P(-11,-43); crater(t[0],t[1],10,1.0);
+      const p2=P(-20,10); crater(p2[0],p2[1],12,1.0); }
+    // fine regolith speckle so the surface never looks like flat paint
+    for(let i=0;i<30000;i++){
+      x.fillStyle = rnd()<0.5 ? "rgba(255,255,255,0.045)" : "rgba(70,68,64,0.05)";
+      x.fillRect(rnd()*W, rnd()*H, 1.6, 1.6);
+    }
+    const moonTex=new THREE.CanvasTexture(c);
+    try{moonTex.colorSpace=THREE.SRGBColorSpace;}catch(e){moonTex.encoding=THREE.sRGBEncoding;}
+    moonTex.wrapS=THREE.RepeatWrapping;
+
+    moonMat=new THREE.ShaderMaterial({
+      uniforms:{
+        uMap  :{value:moonTex},
+        uLight:{value:new THREE.Vector3(0.3,0.15,0.94)},  // model space: +Z faces the viewer
+        uTint :{value:new THREE.Color(0xfbf7ee)},
+        uBright:{value:1.0},
+        uEarth:{value:0.05}                               // earthshine on the dark limb
+      },
+      vertexShader:`
+        varying vec2 vUv; varying vec3 vN;
+        void main(){ vUv=uv; vN=normalize(normal);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+      fragmentShader:`
+        uniform sampler2D uMap; uniform vec3 uLight, uTint;
+        uniform float uBright, uEarth;
+        varying vec2 vUv; varying vec3 vN;
+        void main(){
+          vec3 surf = texture2D(uMap, vUv).rgb;
+          float nl = dot(normalize(vN), normalize(uLight));
+          // terminator: soft, but tighter than a Lambert falloff — the moon
+          // backscatters, so the lit side stays flat and bright to the edge
+          float phase = smoothstep(-0.07, 0.13, nl);
+          float lam   = 0.55 + 0.45*pow(max(nl,0.0), 0.45);
+          // limb darkening is slight; +Z is the viewer in model space
+          float limb  = pow(max(vN.z, 0.0), 0.16);
+          vec3 col = surf * uTint * (phase*lam*limb*uBright + uEarth*(1.0-phase));
+          gl_FragColor = vec4(col, 1.0);
+        }`,
+      fog:false, depthWrite:true
+    });
+    moonMesh=new THREE.Mesh(new THREE.SphereGeometry(5.2,48,32), moonMat);
+    scene.add(moonMesh);
+    // hazy halo around the disc — thickens with humidity, reddens near the horizon
+    moonHalo=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xdfe6ff,
+      transparent:true,opacity:0,depthWrite:false,fog:false,blending:THREE.AdditiveBlending}));
+    moonHalo.scale.set(46,46,1); scene.add(moonHalo);
+  })();
   // shimmering sun-glint column on the water (beach air cue)
   waterGlint=new THREE.Sprite(new THREE.SpriteMaterial({map:GLOW_TEX,color:0xffffff,transparent:true,opacity:0,depthWrite:false,fog:false}));
   waterGlint.scale.set(26,90,1); waterGlint.position.set(LEN/2,0.3,150); scene.add(waterGlint);
@@ -2242,8 +2722,10 @@ stringLights(30.5,9,24,18,2.8,16);
   dune(125,240, 1.0, 34, 0xf6ecd0);
 
   // dune grass — denser, spread across the dunes and out onto the beach
-  const grassMat=mat(0x93a14e,{roughness:1, side:THREE.DoubleSide});
-  const grassMat2=mat(0xa7b25a,{roughness:1, side:THREE.DoubleSide});
+  const grassMat=(function(){ const t=TEX_FROND.clone(); t.repeat.set(1,1); t.needsUpdate=true;
+    return new THREE.MeshStandardMaterial({color:0x93a14e, map:t, roughness:1, side:THREE.DoubleSide}); })();
+  const grassMat2=(function(){ const t=TEX_FROND.clone(); t.repeat.set(1,1); t.needsUpdate=true;
+    return new THREE.MeshStandardMaterial({color:0xa7b25a, map:t, roughness:1, side:THREE.DoubleSide}); })();
   for(let i=0;i<150;i++){
     const x=1+Math.random()*(LEN), z=27+Math.random()*30, tuft=new THREE.Group();
     const gm = Math.random()<0.5?grassMat:grassMat2;
@@ -2290,19 +2772,24 @@ stringLights(30.5,9,24,18,2.8,16);
    banana plants, leaning surfboards and stacked beach chairs
    --------------------------------------------------------------------------- */
 (function(){
-  const fern   = mat(0x2e7d3a,{roughness:0.95, side:THREE.DoubleSide});
-  const fern2  = mat(0x46a14a,{roughness:0.9,  side:THREE.DoubleSide});
+  const fern   = leafMat(0x2e7d3a, 2.4); fern.side=THREE.DoubleSide;
+  const fern2  = leafMat(0x46a14a, 2.8); fern2.side=THREE.DoubleSide;
   // crotons and coleus, the way the real beds are planted: fiery reds and
   // oranges next to acid yellow-greens, deep burgundy and cream variegation
-  const crotonR= mat(0xc23a1f,{roughness:0.85});
-  const crotonO= mat(0xe8862a,{roughness:0.85});
-  const crotonY= mat(0xe6c133,{roughness:0.85});
-  const crotonB= mat(0x6e2530,{roughness:0.85});   // burgundy ti / coleus
-  const crotonL= mat(0x9cb232,{roughness:0.85});   // chartreuse
-  const crotonP= mat(0xa8446e,{roughness:0.85});   // magenta coleus
-  const crotonC= mat(0xd9cf9a,{roughness:0.85});   // cream variegation
+  // croton spears carry the variegated vein map, tinted per cultivar
+  function croMat(hex){ const t=TEX_CROTON.clone(); t.repeat.set(1.6,1); t.needsUpdate=true;
+    return new THREE.MeshStandardMaterial({color:hex, map:t, roughness:0.82}); }
+  const crotonR= croMat(0xc23a1f);
+  const crotonO= croMat(0xe8862a);
+  const crotonY= croMat(0xe6c133);
+  const crotonB= croMat(0x6e2530);   // burgundy ti / coleus
+  const crotonL= croMat(0x9cb232);   // chartreuse
+  const crotonP= croMat(0xa8446e);   // magenta coleus
+  const crotonC= croMat(0xd9cf9a);   // cream variegation
   const CROTONS=[crotonR,crotonO,crotonY,crotonB,crotonL,crotonP,crotonC,crotonR,crotonO,crotonB];
-  const bananaM= mat(0x2f8a3e,{roughness:0.8, side:THREE.DoubleSide});
+  const bananaM= (function(){ const t=TEX_FROND.clone(); t.repeat.set(1,1); t.needsUpdate=true;
+    return new THREE.MeshStandardMaterial({color:0x2f8a3e, map:t, roughness:0.8,
+      side:THREE.DoubleSide}); })();
   const flowerMats=[mat(0xe23b3b,{roughness:0.7}),mat(0xe85a8a,{roughness:0.7}),mat(0xf08a2c,{roughness:0.7}),
                     mat(0xf2d23a,{roughness:0.7}),mat(0xf4eee2,{roughness:0.7}),mat(0x9b59b6,{roughness:0.7})];
   const flowerCtr= mat(0xf2d23a,{roughness:0.55});
@@ -2912,6 +3399,10 @@ function updateDayNight(dt, camp){
   const mdx=horiz, mdy=Math.max(-sh,-0.2);
   moonMesh.position.set(camp.x+mdx*300*0.7, camp.y+mdy*300, camp.z+0.55*300*0.7);
   sunMesh.visible = sh > -0.12; moonMesh.visible = sh < 0.12;
+  if(moonHalo) moonHalo.position.copy(moonMesh.position);
+  // The moon is tidally locked, so keep the same face toward the viewer.
+  moonMesh.lookAt(camp.x, camp.y, camp.z);
+  moonAgeDays += dt/DAY_DURATION;
 
   // phase blending via sunHeight thresholds
   const NIGHT_SKY=0x01020a, NIGHT_FOG=0x000104, NIGHT_CLOUD=0x0a0f22;
@@ -3004,6 +3495,26 @@ function updateDayNight(dt, camp){
   }
   for(const m of CLOUD_MATS)  m.color.copy(cloudc);
   for(const m of SKYLINE_MATS) m.emissiveIntensity = 0.85*night*(1-0.6*rainIntensity);
+
+  // Moon phase rides its own 29.5-day cycle rather than being pinned opposite
+  // the sun, so it changes shape from night to night; low moons dim and warm
+  // through the thicker air near the horizon.
+  { const ph = (moonAgeDays/29.53) * Math.PI*2;              // 0 = new, π = full
+    const U = moonMat.uniforms;
+    // light direction in model space: +Z is the viewer, so cos(ph) sweeps the
+    // terminator from behind the moon (new) round to behind us (full)
+    U.uLight.value.set(Math.sin(ph)*0.98, 0.14, -Math.cos(ph)*0.98).normalize();
+    const alt = Math.max(0, Math.min(1, Math.max(-sh,-0.2)*2.6));
+    U.uTint.value.copy(mix(0xffd9b0, 0xfbf7ee, alt));
+    U.uBright.value = (0.42 + 0.58*alt) * (1 - 0.75*rainIntensity);
+    U.uEarth.value  = 0.045 + 0.03*(1-alt);
+    if(moonHalo){
+      const full = 0.5 - 0.5*Math.cos(ph);                    // 1 at full moon
+      moonHalo.material.opacity = 0.30*full*(0.35+0.65*alt)*(1-0.85*rainIntensity)*night;
+      moonHalo.material.color.copy(mix(0xffc89a, 0xd8e4ff, alt));
+      const hs = 34 + 26*full; moonHalo.scale.set(hs,hs,1);
+    }
+  }
 
   // airborne motes: barely there at noon, brightest raking through golden hour,
   // a faint sparkle at night where the lampposts catch them, gone in the rain
@@ -3141,6 +3652,22 @@ function frame(){ requestAnimationFrame(frame);
   for(const cl of CLOUDS){ cl.position.x+=cl.userData.spd*dt; if(cl.position.x>150) cl.position.x=-80; }
   for(const bt of BOATS){ bt.m.position.x += bt.spd*dt; if(bt.m.position.x>140) bt.m.position.x=-90;
     bt.m.position.y = 0.7 + Math.sin(t*0.8 + bt.m.position.z)*0.15; }   // gentle bob
+  // lit cigarettes: the ember breathes and a thread of smoke lifts off it,
+  // leaning with whatever wind is blowing across the patio
+  for(const sm of SMOKERS){
+    const fl = 0.62 + 0.38*Math.pow(0.5+0.5*Math.sin(t*1.6+sm.seed), 2.2);
+    sm.ember.color.setRGB(0.62+0.42*fl, 0.16+0.20*fl, 0.05+0.06*fl);
+    sm.glow.opacity = 0.28+0.34*fl;
+    for(const pf of sm.puffs){
+      pf.t += dt*0.20; if(pf.t>1) pf.t-=1;
+      const a=pf.t;
+      pf.sp.position.set(sm.ox + Math.sin(a*5.0+pf.seed)*0.045*a + windDx*windAmt*0.22*a,
+                         sm.oy + a*0.80,
+                         sm.oz + Math.cos(a*4.2+pf.seed*1.3)*0.038*a + windDz*windAmt*0.22*a);
+      const sc=0.028 + a*0.17; pf.sp.scale.set(sc,sc,1);
+      pf.sp.material.opacity = Math.sin(a*Math.PI)*0.19;
+    }
+  }
   // grill smoke rising + fading from the bar kitchen
   for(const s of SMOKE){ const u=s.userData; u.t+=dt*0.28; if(u.t>1) u.t-=1;
     s.position.y = u.y0 + u.t*3.2;
