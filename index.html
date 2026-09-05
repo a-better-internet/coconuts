@@ -329,10 +329,10 @@ function breezeBlockTex(){ const c=cvs(128,128),x=c.getContext("2d");
   const cs=[[33,33],[95,33],[33,95],[95,95]];
   // first a dark reveal ring so the cut edges read with thickness…
   x.fillStyle="#9c968a";
-  for(const [px,py] of cs) diamond(px,py,25,()=>x.fill());
-  // …then punch the openings clean through
+  for(const [px,py] of cs) diamond(px,py,19,()=>x.fill());
+  // …then punch the openings clean through, leaving a substantial web between
   x.globalCompositeOperation="destination-out";
-  for(const [px,py] of cs) diamond(px,py,21.5,()=>x.fill());
+  for(const [px,py] of cs) diamond(px,py,15,()=>x.fill());
   x.globalCompositeOperation="source-over";
   const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.encoding=THREE.sRGBEncoding; return t; }
 // scalloped arch trim: solid band with semicircular bites out of the top edge
@@ -357,10 +357,10 @@ function stuccoBumpTex(){ const c=cvs(256,256),x=c.getContext("2d");
   x.fillStyle="#808080"; x.fillRect(0,0,256,256);
   for(let i=0;i<900;i++){                                  // knockdown trowel patches
     const px=Math.random()*256, py=Math.random()*256, r=3+Math.random()*9;
-    x.fillStyle = Math.random()<0.5 ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.14)";
+    x.fillStyle = Math.random()<0.5 ? "rgba(255,255,255,0.085)" : "rgba(0,0,0,0.075)";
     x.beginPath(); x.ellipse(px,py,r,r*(0.5+Math.random()*0.7),Math.random()*3.14,0,7); x.fill(); }
   for(let i=0;i<9000;i++){                                 // fine aggregate tooth
-    x.fillStyle = Math.random()<0.5 ? "rgba(255,255,255,0.13)" : "rgba(0,0,0,0.12)";
+    x.fillStyle = Math.random()<0.5 ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.065)";
     x.fillRect(Math.random()*256, Math.random()*256, 1.5, 1.5); }
   const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; return t; }
 // brick pavers: mortar joints recessed, each brick face slightly domed & worn
@@ -583,7 +583,7 @@ const SKYLINE_MATS=[];
 // ---------------------------------------------------------------------------
 const wallMat = mat(0xf6f4ef,{roughness:0.95,
   bumpMap:(function(){const t=TEX_STUCCOBUMP.clone(); t.repeat.set(3,3); t.needsUpdate=true; return t;})(),
-  bumpScale:0.22});
+  bumpScale:0.10});
 const roofMat = new THREE.MeshStandardMaterial({map:TEX_METALROOF.clone(), roughness:0.55, metalness:0.25});
 roofMat.map.repeat.set(8,8); roofMat.map.needsUpdate=true;
 const darkGlass = mat(0x2a3138,{roughness:0.5, metalness:0.2});
@@ -595,10 +595,10 @@ function buildHotel(){
   const cx = 13.5, cz = -5.5;          // moved further west to widen the walkway
   const hotelBody = mat(0xdcd5c6,{roughness:0.95,                        // warm grey-tan stucco
     bumpMap:(function(){const t=TEX_STUCCOBUMP.clone(); t.repeat.set(14,6); t.needsUpdate=true; return t;})(),
-    bumpScale:0.45});
+    bumpScale:0.14});
   const trimMat   = mat(0xf5f2ea,{roughness:0.9,                         // bright white trim
     bumpMap:(function(){const t=TEX_STUCCOBUMP.clone(); t.repeat.set(10,1); t.needsUpdate=true; return t;})(),
-    bumpScale:0.35});
+    bumpScale:0.11});
   const doorMat   = mat(0x6e3a1c,{roughness:0.75});  // warm stained-oak wood
   const breezeMat = new THREE.MeshStandardMaterial({map:TEX_BREEZE.clone(), roughness:0.9,
     alphaTest:0.5, side:THREE.DoubleSide});          // alphaTest (not transparent) keeps
@@ -715,7 +715,7 @@ function buildCastle(){
   const W=13, H=20, D=10, cx=LEN+1.5, cz=11;
   // diamond-rusticated white walls (matches the quilted stucco in the photo)
   const brickMat=new THREE.MeshStandardMaterial({map:TEX_DIAMOND.clone(), roughness:0.95,
-    bumpMap:TEX_STUCCOBUMP.clone(), bumpScale:0.16});
+    bumpMap:TEX_STUCCOBUMP.clone(), bumpScale:0.10});
   brickMat.map.repeat.set(8,12); brickMat.map.needsUpdate=true;
   const body = box(W,H,D, brickMat); body.position.set(cx,H/2,cz); g.add(body);
   const faceX = cx - W/2 - 0.05;
