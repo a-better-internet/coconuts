@@ -582,10 +582,12 @@ scene.add(paverNW);
 // extend brick as far as possible toward the south / former parking area
 const paverMatS = new THREE.MeshStandardMaterial({map:paverBrickTex(), roughness:1,
   bumpMap:TEX_PAVERBUMP.clone(), bumpScale:0.30});
-paverMatS.map.repeat.set(28,22);
-const paverS = new THREE.Mesh(new THREE.PlaneGeometry(58, 46), paverMatS);
+paverMatS.map.repeat.set(13,19);
+// entrance forecourt. It used to run 58m south, which read as an endless brick
+// plaza; the parking lot and street beyond now take over where it stops.
+const paverS = new THREE.Mesh(new THREE.PlaneGeometry(26, 40), paverMatS);
 paverS.rotation.x = -Math.PI/2;
-paverS.position.set(-26, 0.016, 10);
+paverS.position.set(-10, 0.016, 9);
 paverS.receiveShadow = true;
 scene.add(paverS);
 // (brick mortar comes from the floor texture now — no separate grout overlay)
@@ -643,7 +645,7 @@ const BOATS=[];
 // Windows carry their own emissive map so only the glass lights up after dark,
 // not the whole facade.
 // ---------------------------------------------------------------------------
-const SKYLINE_MATS=[];
+const SKYLINE_MATS=[], STREET_LAMPS=[];
 (function(){
   const FW=192, FH=384;                                 // facade canvas
   // one facade style: `floors` habitable levels over an open parking storey
@@ -726,6 +728,7 @@ const SKYLINE_MATS=[];
     // parapet lip so the roofline reads as a hard white edge, not a cut-off box
     const par=new THREE.Mesh(new THREE.BoxGeometry(w+0.5,0.9,d+0.5), parapetMat);
     par.position.set(x,h+0.3,z); scene.add(par);
+    if(opts.simple) return;        // distant blocks: body and parapet are enough
     // stair / lift tower breaking the roofline, sometimes with a red hip roof
     if(opts.tower!==false){
       const tw=Math.min(w*0.42,6), th=3.2+Math.random()*2.2, tz=z+d*(0.16+Math.random()*0.2);
@@ -743,54 +746,182 @@ const SKYLINE_MATS=[];
     }
   }
 
-  // Asphalt: a service street the row backs onto, and the parking apron each
-  // block fronts. Without it the buildings stand on bare ground and the view
-  // out of the entrance reads as an endless brick plaza.
-  const asphalt=mat(0x6f7377,{roughness:1});
-  const stripeM=mat(0xd6d6cc,{roughness:1});
-  for(const sx of [-1,1]){
-    const road=new THREE.Mesh(new THREE.PlaneGeometry(320,11), asphalt);
-    road.rotation.x=-Math.PI/2; road.position.set(sx*195, 0.012, -24); scene.add(road);
+  // -------------------------------------------------------------------------
+  // The town the beach is attached to. Everything outside the patio used to be
+  // one 400m sand plane, so inland read as an infinite beach and the paving
+  // ended in a hard cut. Ground, streets and blocks now run out to the fog.
+  // -------------------------------------------------------------------------
+  const asphalt = mat(0x6f7377,{roughness:1});
+  const stripeM = mat(0xd6d6cc,{roughness:1});
+  const kerbM   = mat(0xbdbab2,{roughness:1});
+
+  // Built-up ground seen from a distance: asphalt base broken up by concrete
+  // aprons, roofs, bare lots and yards. Tiled at ~50m it reads as a town rather
+  // than a flat swatch, which is all it needs to do past the first block.
+  function townGroundTex(){
+    const c=cvs(256,256), x=c.getContext("2d");
+    x.fillStyle="#6d7175"; x.fillRect(0,0,256,256);
+    const tones=["#7c8084","#878b8e","#6a6e72","#8d8579","#9a9086","#5f6a5c","#728063","#767a7e"];
+    for(let i=0;i<140;i++){
+      const w=10+Math.random()*54, h=10+Math.random()*54;
+      x.fillStyle=tones[(Math.random()*tones.length)|0];
+      x.globalAlpha=0.45+Math.random()*0.45;
+      x.fillRect(Math.random()*256-w*0.3, Math.random()*256-h*0.3, w, h);
+    }
+    x.globalAlpha=1;
+    for(let i=0;i<26;i++){                       // faint street lines through it
+      const v=Math.random()*256;
+      x.fillStyle="rgba(60,63,66,0.35)";
+      Math.random()<0.5 ? x.fillRect(0,v,256,3+Math.random()*4)
+                        : x.fillRect(v,0,3+Math.random()*4,256);
+    }
+    for(let i=0;i<3000;i++){                     // grain so it never looks painted
+      x.fillStyle = Math.random()<0.5 ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.06)";
+      x.fillRect(Math.random()*256, Math.random()*256, 2, 2);
+    }
+    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping;
+    try{t.colorSpace=THREE.SRGBColorSpace;}catch(e){t.encoding=THREE.sRGBEncoding;}
+    return t;
   }
-  // apron between the patio and the near row (sits above the brick, which is
-  // laid at y=0.016, so it replaces it rather than fighting it)
+  const townTex=townGroundTex();
+  function townGround(cx,cz,w,d){
+    const m=new THREE.MeshStandardMaterial({map:townTex.clone(), roughness:1});
+    m.map.repeat.set(w/50, d/50); m.map.needsUpdate=true;
+    const g=new THREE.Mesh(new THREE.PlaneGeometry(w,d), m);
+    g.rotation.x=-Math.PI/2; g.position.set(cx,0.008,cz); g.receiveShadow=true; scene.add(g);
+  }
+  // The patio strip (x -2..46, z -14..26) keeps its own paving and sand; the
+  // town wraps around it and runs past the fog on every inland side.
+  townGround(  20, -200, 780, 372);            // deep inland, behind everything
+  townGround(-185,    6, 366,  40);            // south flank, level with the patio
+  // north flank starts at the bar's service yard rather than the castle's far
+  // face, or a sliver of bare sand survives between the two
+  townGround( 236,    6, 396,  40);            // north flank
+
+  // --- streets -------------------------------------------------------------
+  // The centre line is one alpha-tested strip rather than a mesh per dash — a
+  // 780m avenue would otherwise be a hundred draw calls of painted road marking.
+  const dashTex=(function(){
+    const c=cvs(32,4), x=c.getContext("2d");
+    x.clearRect(0,0,32,4); x.fillStyle="#d8d8ce"; x.fillRect(2,1,18,2);
+    const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping;
+    try{t.colorSpace=THREE.SRGBColorSpace;}catch(e){t.encoding=THREE.sRGBEncoding;}
+    return t;
+  })();
+  function road(cx,cz,w,d,alongX){
+    const r=new THREE.Mesh(new THREE.PlaneGeometry(w,d), asphalt);
+    r.rotation.x=-Math.PI/2; r.position.set(cx,0.014,cz); scene.add(r);
+    const run = alongX ? w : d;
+    if(run < 14 || w < 6) return;              // driveways carry no marking
+    const dm=new THREE.MeshBasicMaterial({map:dashTex.clone(), transparent:true,
+      alphaTest:0.4, depthWrite:false});
+    dm.map.repeat.set(run/9, 1); dm.map.needsUpdate=true;
+    const line=new THREE.Mesh(new THREE.PlaneGeometry(alongX?w:0.3, alongX?0.3:d), dm);
+    line.rotation.x=-Math.PI/2;
+    if(!alongX) line.rotation.z=Math.PI/2;     // texture runs along the strip
+    line.position.set(cx,0.017,cz); scene.add(line);
+  }
+  road(20, -18.5, 780, 11, true);              // Atlantic Ave, behind the front row
+  road(20, -65,   780, 11, true);              // the next street inland
+  road(20, -108,  780, 11, true);
+  // cross streets in the gaps between the beachfront blocks
+  for(const cx of [-76,-111,-141,-176,-215, 48, 86, 124, 160, 205]){
+    road(cx, 2, 9, 32, false);
+  }
+
+  // --- the lot the patio's entrance opens onto -----------------------------
   (function(){
-    const apron=new THREE.Mesh(new THREE.PlaneGeometry(46,46), asphalt);
-    apron.rotation.x=-Math.PI/2; apron.position.set(-40, 0.021, 8); scene.add(apron);
-    for(let z=-12; z<=28; z+=2.8){          // painted stalls facing the buildings
-      const st=new THREE.Mesh(new THREE.PlaneGeometry(4.6,0.13), stripeM);
-      st.rotation.x=-Math.PI/2; st.position.set(-55, 0.023, z); scene.add(st);
+    const lot=new THREE.Mesh(new THREE.PlaneGeometry(38,40), asphalt);
+    lot.rotation.x=-Math.PI/2; lot.position.set(-42, 0.020, 9); scene.add(lot);
+    for(let z=-8; z<=26; z+=2.7){               // stalls down both aisles
+      for(const sx of [-56,-30]){
+        const st=new THREE.Mesh(new THREE.PlaneGeometry(4.8,0.13), stripeM);
+        st.rotation.x=-Math.PI/2; st.position.set(sx, 0.023, z); scene.add(st);
+      }
     }
-    for(let z=-12; z<=28; z+=2.8){
-      const st=new THREE.Mesh(new THREE.PlaneGeometry(4.6,0.13), stripeM);
-      st.rotation.x=-Math.PI/2; st.position.set(-25, 0.023, z); scene.add(st);
-    }
-    const kerb=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.16,46), mat(0xbdbab2,{roughness:1}));
-    kerb.position.set(-17.5,0.08,8); scene.add(kerb);
+    // kerbs where the brick, the lot and the street meet, so nothing ends raw
+    const k1=new THREE.Mesh(new THREE.BoxGeometry(0.4,0.17,40), kerbM);
+    k1.position.set(-23,0.085,9); scene.add(k1);
+    const k2=new THREE.Mesh(new THREE.BoxGeometry(38,0.17,0.4), kerbM);
+    k2.position.set(-42,0.085,29); scene.add(k2);
   })();
 
-  // Low-rise motels near in, condo towers stacked behind them and further off.
-  // x runs along the shore; the ocean end of each building sits near z≈24.
-  const rows=[
-    // [x, z, width, depth, floors, style, redRoof]
-    [ -67,  6, 15, 34,  4, 0, true ], [ -85,  5, 13, 32,  3, 1, false],
-    [-102,  7, 17, 36,  4, 2, false], [-120,  4, 14, 30,  3, 1, true ],
-    [-131,  6, 16, 34,  5, 2, false], [-152,  5, 15, 32,  4, 0, false],
-    [  58,  6, 14, 32,  4, 1, false], [  76,  5, 16, 35,  3, 0, true ],
-    [  95,  7, 15, 33,  4, 2, false], [ 114,  4, 13, 30,  4, 1, false],
-    // towers set back behind the low-rise row
-    [ -70,-34, 20, 26, 11, 3, false], [-104,-32, 18, 24, 15, 4, false],
-    [-144,-36, 22, 28, 11, 3, false], [-196,-30, 20, 26, 15, 4, false],
-    [-252,-34, 24, 30, 11, 3, false], [  88,-33, 19, 25, 11, 3, false],
-    [ 132,-31, 21, 27, 15, 4, false], [ 188,-35, 20, 26, 11, 3, false],
-    [ 262,-32, 23, 29, 15, 4, false]
-  ];
-  for(const r of rows) building(r[0], r[1], r[2], r[3], r[4], r[5], {redRoof:r[6]});
-  // clipped hedges along the base of the near row, as on every block down here
+  // Low-rise motels on the beachfront, condo towers behind, and blocks running
+  // back inland so the horizon is town rather than empty ground.
+  //
+  // Rows are laid out from an outer edge rather than by hand-placed centres:
+  // each block consumes its own width plus a gap, so buildings can never end up
+  // intersecting and every driveway lands in a real gap.
+  const NEAR_BLOCKS=[];
+  function layRow(edge0, dir, z, specs, gap, drive){
+    let edge=edge0;
+    for(const sp of specs){
+      const w=sp[0], d=sp[1], fl=sp[2], st=sp[3], opt=sp[4]||{};
+      const cx=edge+dir*(w/2);
+      building(cx, z, w, d, fl, st, opt);
+      if(drive) NEAR_BLOCKS.push([cx,z,w,d]);
+      edge += dir*w;
+      if(drive) road(edge+dir*(gap/2), z, gap*0.7, d*0.94, false);
+      edge += dir*gap;
+    }
+  }
+  // beachfront row, running away from the patio in both directions
+  layRow(-62, -1, 6, [
+    [15,34,4,0,{redRoof:true}], [13,32,3,1], [17,36,4,2], [14,30,3,1,{redRoof:true}],
+    [16,34,5,2], [15,32,4,0], [18,34,4,2], [16,32,3,1], [15,33,4,0]
+  ], 5.5, true);
+  layRow( 52,  1, 6, [
+    [14,32,4,1], [16,35,3,0,{redRoof:true}], [15,33,4,2], [13,30,4,1],
+    [17,34,4,0], [15,32,3,2], [17,33,4,1]
+  ], 5.5, true);
+  // driveway between the patio's north end and the first block up the beach
+  road(49, 6, 3.6, 30, false);
+
+  // second row, across Atlantic Ave — this is where the condo towers sit
+  layRow(-58, -1, -42, [
+    [20,30,11,3], [18,28,15,4], [22,32,11,3], [20,28,15,4], [24,34,11,3], [21,30,12,3]
+  ], 7, false);
+  layRow( 56,  1, -42, [
+    [19,29,11,3], [21,31,15,4], [20,28,11,3], [23,33,15,4], [20,30,12,3]
+  ], 7, false);
+  // …and directly behind the patio itself
+  layRow(-36, 1, -43, [ [17,30,4,2], [14,27,4,0], [16,28,3,1], [18,29,5,2] ], 8, false);
+
+  // third row, low-rise, further inland
+  layRow(-40, -1, -86, [
+    [20,26,3,1,{simple:true}], [22,28,4,2,{simple:true}], [19,25,3,0,{simple:true}],
+    [24,30,4,1,{simple:true}], [21,27,3,2,{simple:true}], [20,26,4,0,{simple:true}]
+  ], 9, false);
+  layRow( -30, 1, -86, [
+    [21,27,4,2,{simple:true}], [18,24,3,0,{simple:true}], [23,29,4,1,{simple:true}],
+    [20,26,3,2,{simple:true}], [22,28,4,0,{simple:true}], [19,25,3,1,{simple:true}],
+    [21,27,4,2,{simple:true}]
+  ], 9, false);
+
+  // deep field, heavily fogged — bulk and silhouette only
+  layRow(-60, -1, -142, [
+    [26,30,5,2,{simple:true}], [24,28,4,1,{simple:true}], [28,32,6,3,{simple:true}],
+    [25,29,4,2,{simple:true}], [27,31,5,0,{simple:true}]
+  ], 14, false);
+  layRow(-20, 1, -146, [
+    [24,28,4,1,{simple:true}], [28,32,6,3,{simple:true}], [26,30,5,2,{simple:true}],
+    [25,29,4,0,{simple:true}], [26,30,5,1,{simple:true}]
+  ], 14, false);
+  layRow(-80, -1, -202, [
+    [30,34,4,1,{simple:true}], [28,32,5,2,{simple:true}], [32,36,4,0,{simple:true}],
+    [29,33,5,3,{simple:true}]
+  ], 20, false);
+  layRow( 20, 1, -200, [
+    [32,36,5,2,{simple:true}], [30,34,4,0,{simple:true}], [28,32,5,1,{simple:true}],
+    [31,35,4,3,{simple:true}]
+  ], 20, false);
+
+  // clipped hedges along the base of the nearest blocks, as on every lot here.
+  // Only the closest few — past that they cost draw calls nobody can resolve.
   const hedgeA=leafMat(0x397038, 1.6, 0.5), hedgeB=leafMat(0x2f6130, 1.9, 0.5);
-  for(let i=0;i<10;i++){
-    const bx=rows[i][0], bz=rows[i][1], bw=rows[i][2], bd=rows[i][3];
-    for(let z=bz-bd/2+1; z<bz+bd/2; z+=1.5){
+  for(const b of NEAR_BLOCKS.slice(0,2).concat(NEAR_BLOCKS.slice(9,11))){
+    const bx=b[0], bz=b[1], bw=b[2], bd=b[3];
+    for(let z=bz-bd/2+1; z<bz+bd/2; z+=2.4){
       for(const sx of [-1,1]){
         const h=new THREE.Mesh(new THREE.SphereGeometry(0.85+Math.random()*0.25,7,6),
                                Math.random()<0.5?hedgeA:hedgeB);
@@ -800,6 +931,18 @@ const SKYLINE_MATS=[];
       }
     }
   }
+  // street lights down Atlantic Ave and the entrance lot
+  const poleM=mat(0x4a4f53,{roughness:0.6,metalness:0.3});
+  const headM=new THREE.MeshBasicMaterial({color:0x6a6149});
+  for(let lx=-260; lx<=300; lx+=34){
+    const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.13,0.18,8,8), poleM);
+    pole.position.set(lx,4,-25.7); scene.add(pole);
+    const arm=new THREE.Mesh(new THREE.BoxGeometry(2.2,0.14,0.14), poleM);
+    arm.position.set(lx+1.1,7.9,-25.7); scene.add(arm);
+    const head=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.22,0.5), headM);
+    head.position.set(lx+2.1,7.8,-25.7); scene.add(head);
+  }
+  STREET_LAMPS.push(headM);        // one shared material for the whole run
 })();
 
 // ---------------------------------------------------------------------------
@@ -3529,6 +3672,7 @@ function updateDayNight(dt, camp){
   }
   for(const m of CLOUD_MATS)  m.color.copy(cloudc);
   for(const m of SKYLINE_MATS) m.emissiveIntensity = 0.85*night*(1-0.6*rainIntensity);
+  for(const m of STREET_LAMPS) m.color.copy(mix(0x6a6149, 0xffe6b0, night));
 
   // Moon phase rides its own 29.5-day cycle rather than being pinned opposite
   // the sun, so it changes shape from night to night; low moons dim and warm
